@@ -126,6 +126,7 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
   background: var(--muted); color: var(--muted-foreground);
 }
 .badge:empty { display: none; }
+.badge.danger { background: color-mix(in srgb, var(--destructive) 12%, var(--card)); color: var(--destructive); }
 .line-note { font-size: 12px; color: var(--muted-foreground); }
 .line-note.new { color: var(--foreground); font-weight: 500; }
 .line-note.gone { color: var(--destructive); }

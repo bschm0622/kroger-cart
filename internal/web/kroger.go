@@ -28,6 +28,15 @@ type Item struct {
 	Image string `json:"image,omitempty"`
 	Price string `json:"price,omitempty"`
 
+	// Availability for the way you shop (pickup unless your x-modality header
+	// says otherwise). Stock is Kroger's inventory level, e.g. HIGH, LOW or
+	// TEMPORARILY_OUT_OF_STOCK. Unavailable is set, with Kroger's own message,
+	// when the item can't be ordered that way right now; it stays empty when
+	// Kroger said nothing either way, rather than guessing.
+	Stock       string `json:"stock,omitempty"`
+	Unavailable string `json:"unavailable,omitempty"`
+	MaxQty      int    `json:"maxQty,omitempty"`
+
 	// DeptCode drives Orderable; it is not shown, so it stays off the wire.
 	DeptCode string `json:"-"`
 }
@@ -40,6 +49,9 @@ type CartLine struct {
 	Quantity int    `json:"quantity"`
 	Modality string `json:"modality,omitempty"`
 	Name     string `json:"name,omitempty"`
+	// Unavailable carries Item.Unavailable, so the cart can flag what Kroger
+	// says it can't fill.
+	Unavailable string `json:"unavailable,omitempty"`
 }
 
 // Trip is one past purchase.
@@ -55,6 +67,21 @@ type Trip struct {
 // Every method returns a plain Go value so handlers stay free of JSON pathing.
 type api struct {
 	c *client.Client
+}
+
+// modality is how you shop — PICKUP, DELIVERY, … — read from the x-modality
+// store header saved by `auth set-store`. Availability differs by modality, so
+// it decides which of Kroger's per-modality answers counts.
+func (a *api) modality() string {
+	if a.c != nil && a.c.Config != nil {
+		var m struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(a.c.Config.Headers["x-modality"]), &m) == nil && m.Type != "" {
+			return m.Type
+		}
+	}
+	return "PICKUP"
 }
 
 const (
@@ -240,6 +267,7 @@ func (a *api) Products(ctx context.Context, upcs []string) (map[string]Item, err
 
 func (a *api) products(ctx context.Context, upcs []string, verified bool, out map[string]Item) error {
 	const batch = 24
+	mod := a.modality()
 	for start := 0; start < len(upcs); start += batch {
 		end := min(start+batch, len(upcs))
 		raw, err := a.c.GetNoCache(ctx, pathProducts, map[string]string{
@@ -268,6 +296,25 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 							URL  string `json:"url"`
 						} `json:"images"`
 					} `json:"item"`
+					// One summary per way of shopping. This, not
+					// sourceLocations[].modalityAvailabilities, is what says
+					// an item is out of stock: the latter still reports
+					// pickup as available for an item Kroger won't sell.
+					FulfillmentSummaries []struct {
+						Type    string `json:"type"`
+						Regular struct {
+							Price string `json:"price"`
+						} `json:"regular"`
+						Sale *struct {
+							Price string `json:"price"`
+						} `json:"sale"`
+						Availability struct {
+							Sellable              bool   `json:"sellable"`
+							InventoryLevel        string `json:"inventoryLevel"`
+							UnavailabilityMessage string `json:"unavailabilityMessage"`
+						} `json:"availability"`
+						MaxOrderQuantity int `json:"maxOrderQuantity"`
+					} `json:"fulfillmentSummaries"`
 				} `json:"products"`
 			} `json:"data"`
 		}
@@ -289,10 +336,41 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 					it.Image = img.URL
 				}
 			}
+			if len(p.FulfillmentSummaries) > 0 {
+				it.Unavailable = "Not available for " + strings.ToLower(mod)
+				for _, f := range p.FulfillmentSummaries {
+					if f.Type != mod {
+						continue
+					}
+					it.Price = dollars(f.Regular.Price)
+					if f.Sale != nil && f.Sale.Price != "" {
+						it.Price = dollars(f.Sale.Price)
+					}
+					it.Stock = f.Availability.InventoryLevel
+					it.MaxQty = f.MaxOrderQuantity
+					it.Unavailable = ""
+					if !f.Availability.Sellable {
+						it.Unavailable = f.Availability.UnavailabilityMessage
+						if it.Unavailable == "" {
+							it.Unavailable = "Not available right now"
+						}
+					}
+				}
+			}
 			out[it.UPC] = it
 		}
 	}
 	return nil
+}
+
+// dollars turns Kroger's "USD 12.39" into "$12.39". Its ready-made
+// priceString is only filled in for items on sale, so the raw price is the
+// one every product has.
+func dollars(p string) string {
+	if amt, ok := strings.CutPrefix(strings.TrimSpace(p), "USD "); ok {
+		return "$" + amt
+	}
+	return p
 }
 
 // nonGroceryDepts are departments whose "products" are transaction lines, not
@@ -345,6 +423,21 @@ func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, err
 			continue
 		}
 		items = append(items, Item{UPC: p.UPC, Name: p.Description})
+	}
+	// Search returns only barcodes and a lower-cased description. Price,
+	// size, picture and — the one that matters — whether you can actually
+	// buy it come from the product lookup. A failed lookup still returns the
+	// bare results rather than nothing.
+	upcs := make([]string, len(items))
+	for i, it := range items {
+		upcs[i] = it.UPC
+	}
+	if details, err := a.Products(ctx, upcs); err == nil {
+		for i, it := range items {
+			if d, ok := details[it.UPC]; ok {
+				items[i] = d
+			}
+		}
 	}
 	return items, nil
 }

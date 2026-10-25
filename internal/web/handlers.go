@@ -146,6 +146,7 @@ func (s *Server) handleCartGet(w http.ResponseWriter, r *http.Request) {
 		for i := range lines {
 			if it, ok := names[lines[i].UPC]; ok {
 				lines[i].Name = it.Name
+				lines[i].Unavailable = it.Unavailable
 			}
 		}
 	}
@@ -579,8 +580,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flat := make(map[string]string, len(names))
+	unavailable := map[string]string{}
 	for u, it := range names {
 		flat[u] = it.Name
+		if it.Unavailable != "" {
+			unavailable[u] = it.Unavailable
+		}
 	}
-	writeJSON(w, map[string]any{"trips": trips, "names": flat})
+	writeJSON(w, map[string]any{"trips": trips, "names": flat, "unavailable": unavailable})
 }

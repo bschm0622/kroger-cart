@@ -158,6 +158,7 @@ async function refreshCart() {
   state.cartLoaded = !!cart;
   if (cart) {
     state.cart = cart;
+    noteStock(cart.lines.filter((l) => l.name).map((l) => ({ upc: l.upc, unavailable: l.unavailable || '' })));
     adoptOldList();
     // An edit that now matches the cart (changed on kroger.com, or just sent)
     // is no longer a change.
@@ -229,6 +230,29 @@ const saveDraft = () => localStorage.setItem(DRAFT_KEY, JSON.stringify([...state
 const stapleFor = (upc) => state.staples.find((s) => s.upc === upc);
 const usual = () => state.staples.filter((s) => s.selected);
 const inCart = (upc) => state.cart.lines.reduce((n, l) => n + (l.upc === upc ? l.quantity : 0), 0);
+
+// What Kroger last said about an item's availability, gathered from search
+// results, past trips and the cart: upc → { unavailable, stock, maxQty }.
+// Staples come from a local file and carry none, so an item only shows a
+// warning once Kroger has been asked about it.
+state.stock = new Map();
+function noteStock(items) {
+  for (const it of items) {
+    if (!it?.upc) continue;
+    if (it.unavailable || it.stock || it.maxQty) {
+      state.stock.set(it.upc, { unavailable: it.unavailable || '', stock: it.stock || '', maxQty: it.maxQty || 0 });
+    } else if ('unavailable' in it) {
+      state.stock.delete(it.upc);
+    }
+  }
+}
+const unavailableFor = (upc) => state.stock.get(upc)?.unavailable || '';
+function stockBadge(upc) {
+  const s = state.stock.get(upc);
+  if (s?.unavailable) return el('span', { className: 'badge danger', textContent: s.unavailable });
+  if (s?.stock === 'LOW') return el('span', { className: 'badge', textContent: 'Low stock' });
+  return null;
+}
 const nameFor = (upc) => state.draft.get(upc)?.name
   || state.cart.lines.find((l) => l.upc === upc && l.name)?.name
   || stapleFor(upc)?.name || state.tripNames[upc] || '';
@@ -321,6 +345,12 @@ function fillControl(slot, keepFocus) {
   slot.textContent = '';
   slot.closest('.item')?.classList.toggle('on', qty > 0);
   if (!qty) {
+    // Kroger says it can't sell this right now, so there is nothing to add.
+    if (unavailableFor(item.upc) && !inCart(item.upc)) {
+      slot.append(el('button', { type: 'button', className: 'btn outline sm', disabled: true,
+        textContent: 'Unavailable', title: unavailableFor(item.upc) }));
+      return;
+    }
     const word = slot.addLabel || 'Add';
     const add = el('button', { type: 'button', className: 'btn outline sm', ariaLabel: `${word} ${label}` },
       [icon('plus'), word]);
@@ -335,6 +365,9 @@ function fillControl(slot, keepFocus) {
   minus.onclick = () => setQty(item, qty - 1);
   const plus = el('button', { type: 'button', ariaLabel: `One more ${label}` }, [icon('plus')]);
   plus.onclick = () => setQty(item, qty + 1);
+  // Kroger caps some items per order; going past it would just be refused.
+  const max = state.stock.get(item.upc)?.maxQty;
+  if (max && qty >= max) { plus.disabled = true; plus.title = `Kroger limits this to ${max} per order`; }
   slot.append(el('span', { className: 'stepper' }, [
     minus, el('output', { textContent: String(qty), ariaLabel: 'Quantity' }), plus,
   ]));
@@ -373,6 +406,9 @@ const emptyRow = (text) => el('div', { className: 'item empty', textContent: tex
 function panelLine(l, note) {
   const kids = [el('span', { textContent: l.name || nameFor(l.upc) || l.upc, title: l.name || l.upc })];
   if (note) kids.push(el('div', { className: `line-note ${note.kind}`, textContent: note.text }));
+  if (unavailableFor(l.upc) && qtyOnList(l.upc) > 0) {
+    kids.push(el('div', { className: 'line-note gone', textContent: `${unavailableFor(l.upc)}. Kroger may not be able to fill this.` }));
+  }
   if (!stapleFor(l.upc) && note && note.kind === 'new') {
     const promote = el('button', { type: 'button', className: 'make-staple', textContent: 'Make it a staple' });
     promote.onclick = () => makeStaple({ ...l, qty: qtyOnList(l.upc) || l.qty });
@@ -596,6 +632,7 @@ function renderFind() {
     // Say when a result is already a staple: silently offering something that's
     // on your list is the most confusing thing search can do.
     if (stapleFor(item.upc)) kids.push(el('span', { className: 'badge', textContent: 'Staple' }));
+    kids.push(stockBadge(item.upc));
     list.append(itemRow(item, { meta: kids.filter(Boolean), thumb: item.image }));
   }
 }
@@ -607,6 +644,7 @@ $('#find-form').onsubmit = (e) => {
   run(async () => {
     const out = await api(`/api/search?q=${encodeURIComponent(term)}&size=24`);
     state.found = out.items || [];
+    noteStock(state.found);
     state.findTerm = term;
     renderFind();
   });
@@ -752,6 +790,8 @@ async function loadHistory() {
   if (!out) return;
   state.trips = out.trips || [];
   state.tripNames = out.names || {};
+  // Every name the lookup resolved is known-available unless listed here.
+  noteStock(Object.keys(state.tripNames).map((upc) => ({ upc, unavailable: (out.unavailable || {})[upc] || '' })));
   renderHistory();
 }
 
@@ -803,7 +843,7 @@ function renderHistory() {
     // nobody looks at.
     const fill = () => {
       if (items.childElementCount) return;
-      for (const upc of shown) items.append(itemRow(toItem(upc)));
+      for (const upc of shown) items.append(itemRow(toItem(upc), { meta: [stockBadge(upc)].filter(Boolean) }));
     };
 
     const where = t.type === 'IN_STORE' ? 'In store' : (t.type || '').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
