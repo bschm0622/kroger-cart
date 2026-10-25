@@ -14,10 +14,6 @@ import (
 	"github.com/bschm0622/kroger-cart/internal/config"
 )
 
-// fakeKroger stands in for the Atlas API so the cart wire shapes can be pinned
-// without a live session. It records the PUT bodies the UI sends, which is the
-// part most likely to break: an empty lineItems array or a missing line item id
-// is rejected by the real API, and both are easy to reintroduce.
 type fakeKroger struct {
 	*httptest.Server
 	puts []map[string]any
@@ -47,8 +43,6 @@ func newFakeKroger(t *testing.T) *fakeKroger {
 			_, _ = w.Write([]byte(`{"data":{"cart":{"id":"cart-1"}}}`))
 
 		case r.Method == http.MethodGet && r.URL.Path == "/atlas/v1/product/v2/products":
-			// The verified catalog omits the deli item and the pickup fee, so
-			// they only appear on the unverified retry — same as the real API.
 			if r.URL.Query().Get("filter.verified") == "true" {
 				_, _ = w.Write([]byte(`{"data":{"products":[
 					{"item":{"upc":"0000000004011","description":"Bananas","customerFacingSize":"1 Bunch"}},
@@ -78,8 +72,6 @@ func newFakeKroger(t *testing.T) *fakeKroger {
 				 "lineItems":[{"upc":"0000000004011"}]}]}}}`))
 
 		default:
-			// Kroger answers a wrong method with 405, not a 404 or a body, so
-			// mismatches land here rather than parsing as an empty result.
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -88,12 +80,10 @@ func newFakeKroger(t *testing.T) *fakeKroger {
 	return f
 }
 
-// newTestServer wires a Server against the fake API and a scratch config dir.
 func newTestServer(t *testing.T, fake *fakeKroger) (*Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
-	// A cookie-shaped value so CookieHeader() is non-empty; the fake ignores it.
 	body := "base_url = \"" + fake.URL + "\"\naccess_token = \"bm_sz=abc; _abck=def\"\n"
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -121,11 +111,7 @@ func do(t *testing.T, srv *Server, method, path, body string) *httptest.Response
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
 	}
-	// httptest.NewRequest's default RemoteAddr is 192.0.2.1, which localOnly
-	// correctly rejects; every real request arrives from loopback.
 	r.RemoteAddr = "127.0.0.1:54321"
-	// Its default Host, example.com, is refused too: real requests are
-	// addressed to the address the server listens on.
 	r.Host = "127.0.0.1:8787"
 	if body != "" {
 		r.Header.Set("Content-Type", "application/json")
@@ -144,8 +130,6 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
-// The cart read must pick the ACTIVE cart and resolve names, because a cart of
-// bare barcodes can't be reviewed before checkout.
 func TestCartGetPicksActiveCartAndResolvesNames(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
@@ -168,8 +152,6 @@ func TestCartGetPicksActiveCartAndResolvesNames(t *testing.T) {
 	}
 }
 
-// A product new to the cart is added without a line id (Kroger rejects one on a
-// fresh add); one already there is edited through its line id.
 func TestCartUpdateAddsNewAndEditsExistingByLineID(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
@@ -214,14 +196,10 @@ func TestCartUpdateRejectsNoChanges(t *testing.T) {
 	}
 }
 
-// Seeding counts trips, not line items: a UPC listed twice on one receipt is
-// still one trip, or a single bulk purchase would outrank a weekly habit.
 func TestStaplesSeedCountsTripsAndKeepsEdits(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, dir := newTestServer(t, fake)
 
-	// A prior list with a curated quantity and selection, plus a hand-added
-	// item that no trip mentions.
 	prior := staplesHeader + "\n" +
 		"3\t0000000004011\t28x\tBananas\n" +
 		"# 1\t0009999999999\t0x\tHand added\n"
@@ -271,10 +249,6 @@ func TestHistoryResolvesNamesInOneBulkCall(t *testing.T) {
 	if b, _ := items["0000000004011"].(map[string]any); b == nil || b["name"] != "Bananas" {
 		t.Errorf("items came back as %v", items)
 	}
-	// The same UPC appears three times across the two trips; resolving per
-	// trip would multiply a rate-limited call needlessly. One verified call
-	// plus at most one unverified retry for whatever it missed is the ceiling,
-	// however many trips or repeats there are.
 	var verified, unverified int
 	for _, req := range fake.seen {
 		switch {
@@ -309,8 +283,6 @@ func TestSearchNeedsATerm(t *testing.T) {
 	if len(items) != 1 || items[0].(map[string]any)["upc"] != "0001111004412" {
 		t.Fatalf("got %v", items)
 	}
-	// The wire parameter is filter.query; filter.keyword is ignored rather
-	// than rejected and silently returns nothing.
 	var found bool
 	for _, req := range fake.seen {
 		if strings.Contains(req, "filter.query=olive+oil") {
@@ -322,8 +294,6 @@ func TestSearchNeedsATerm(t *testing.T) {
 	}
 }
 
-// The recipe editor's round trip has to survive DisallowUnknownFields, so the
-// JSON the page posts must match the struct exactly.
 func TestRecipeAPIRoundTrip(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, dir := newTestServer(t, fake)
@@ -351,8 +321,6 @@ func TestRecipeAPIRoundTrip(t *testing.T) {
 	}
 }
 
-// The saved session can place orders, so a request from off-box must not be
-// served even if someone binds to a routable address.
 func TestNonLoopbackRequestIsRefused(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
@@ -366,8 +334,6 @@ func TestNonLoopbackRequestIsRefused(t *testing.T) {
 	}
 }
 
-// A page on another origin must not be able to drive the API through the
-// browser; localhost binding alone does not stop that.
 func TestCrossOriginRequestIsRefused(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
@@ -392,8 +358,6 @@ func TestCrossOriginRequestIsRefused(t *testing.T) {
 	}
 }
 
-// A pasted bearer token must be rejected rather than stored: it would overwrite
-// a working cookie jar and every later call would 401.
 func TestCookieEndpointRejectsNonCookie(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
@@ -404,8 +368,6 @@ func TestCookieEndpointRejectsNonCookie(t *testing.T) {
 	}
 }
 
-// DevTools' "copy value" includes the header name on some wrapped headers and
-// breaks long values across lines; both must be tolerated.
 func TestCookieEndpointNormalizesPaste(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, dir := newTestServer(t, fake)
@@ -427,9 +389,6 @@ func TestCookieEndpointNormalizesPaste(t *testing.T) {
 	}
 }
 
-// The in-store pickup fee rides along on every pickup order, so by trip count
-// it outranks every real grocery. It is a transaction line, not something that
-// can be put in a cart, and must not head the staples list.
 func TestStaplesSeedDropsNonGroceryDepartments(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, dir := newTestServer(t, fake)
@@ -448,9 +407,6 @@ func TestStaplesSeedDropsNonGroceryDepartments(t *testing.T) {
 	if _, ok := byUPC["0000000023108"]; ok {
 		t.Error("the in-store pickup fee (department 34) was seeded as a staple")
 	}
-	// The deli item is a real grocery the verified catalog does not carry. It
-	// must survive, and the unverified retry must supply its name — otherwise
-	// the list shows a bare barcode.
 	deli, ok := byUPC["0023536740000"]
 	if !ok {
 		t.Fatal("the deli item was dropped; only non-grocery departments should be")

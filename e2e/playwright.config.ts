@@ -1,7 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// The real server (built from this repo) runs against fakekroger, a stand-in
-// for kroger.com, so these tests never touch anyone's account.
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,

@@ -24,8 +24,6 @@ import (
 //go:embed assets
 var assets embed.FS
 
-// Server serves the local UI. NewClient is called per request because the
-// session can be replaced while the server runs; the rate limiter is shared.
 type Server struct {
 	Addr       string
 	ConfigPath string
@@ -60,8 +58,7 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	// Embedded files have no modtime, so without this the browser keeps the
-	// old app.js after a rebuild.
+	// Embedded files have no modtime; without no-cache the browser keeps an old app.js.
 	files := http.FileServerFS(ui)
 	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
@@ -111,14 +108,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
-// localOnly lets through only this machine's own page. The saved session can
-// read order history and change the cart, and this server has no login.
-//   - Requests must come from loopback and be addressed to localhost (the Host
-//     check stops DNS rebinding).
-//   - An Origin, if sent, must be this server itself, not another local port.
-//   - Writes must be JSON, which a page on another site can't send without a
-//     preflight this server never approves.
-//   - Sec-Fetch-Site rules out cross-site reads such as <img src>.
+// localOnly serves only this machine's own page: loopback, addressed to localhost
+// (DNS rebinding), same origin, JSON writes (no preflight-free cross-site posts).
 func localOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -163,15 +154,11 @@ func isLocalHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// --- helpers ---
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// failure is an error as the page needs it: a kind it can act on, and a
-// sentence a person can read.
 type failure struct {
 	Kind string
 	Msg  string
@@ -202,8 +189,7 @@ func classify(err error) failure {
 			return failure{"other", fmt.Sprintf("Kroger rejected the request (HTTP %d).", apiErr.StatusCode)}
 		}
 	}
-	// With no status code to read: Akamai drops the HTTP/2 stream when the
-	// session's bot-protection cookies have gone stale.
+	// Akamai drops the HTTP/2 stream, with no status code, when the session has gone stale.
 	if msg := err.Error(); strings.Contains(msg, "INTERNAL_ERROR") || strings.Contains(msg, "stream error") {
 		return failure{"auth", "Kroger's bot protection turned the request away, which is what an old session looks like."}
 	}
@@ -225,8 +211,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	writeFailure(w, http.StatusBadGateway, classify(err))
 }
 
-// noteRateLimit starts a one-minute pause after Kroger answers 429: more
-// requests during it only prolong the limit.
+// noteRateLimit pauses Kroger calls for a minute after a 429; retrying sooner prolongs it.
 func (s *Server) noteRateLimit(err error) {
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {

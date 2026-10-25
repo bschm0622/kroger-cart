@@ -24,6 +24,10 @@ one at a time, and wait for them.
 
 ## 0. Check the machine
 
+First ask where they shop online. This only works with **kroger.com**. Ralphs,
+Fred Meyer, King Soopers, Smith's, Fry's, QFC and other Kroger-family stores
+have their own sites, which it doesn't support; if that's them, say so and stop.
+
 ```bash
 sw_vers -productName      # want: macOS
 go version                # want: go1.26.4 or newer
@@ -67,12 +71,18 @@ Check:
 ./kroger-pp-cli doctor        # want a line reading OK Auth
 ```
 
+If it doesn't say OK Auth right after they signed in, Chrome probably hasn't
+saved the new session to disk yet: wait about 30 seconds and run
+`auth from-chrome` again.
+
 ## 3. Set the store
 
 Product search needs to know which store they shop at, and kroger.com only
 sends that inside its own requests. Ask the person to do this, word for word:
 
-1. On kroger.com in Chrome, search for anything, for example "milk".
+1. On kroger.com in Chrome, make sure it's set to how they shop (pickup or
+   delivery, and the right store), then search for anything, for example
+   "milk".
 2. Press ⌥⌘I to open DevTools, and click the **Network** tab.
 3. Type `products-search` in the filter box. If the list is empty, search
    again with DevTools open.
@@ -139,11 +149,13 @@ Check: `curl -sf -o /dev/null http://127.0.0.1:8787/ && echo up`
 - **Each week:** double-click **Kroger Cart**. Add what you want from Staples,
   Search, Recipes or Past trips; the right-hand panel shows your Kroger cart.
   Press **Update Kroger cart** to send changes, then check out on kroger.com.
-- **Your usual:** once the cart holds a normal week's shop, **Save as usual**
-  remembers it, and **Add your usual** brings the cart back up to it.
-- **When the page says the session expired** (every few days), press
-  **Import from Chrome** on the page, while signed in to kroger.com in Chrome.
-- **If they switch stores**, repeat step 3.
+- **Your usual:** star the staples you buy every week (or fill the cart with a
+  normal week's shop and press **Save as usual**). **Add your usual** then
+  brings the cart up to it in one click.
+- **When the page says the session expired** (every few days), it first tries
+  Chrome by itself; if that fails, sign in to kroger.com in Chrome and press
+  **Import from Chrome**.
+- **If they switch stores, or between pickup and delivery**, repeat step 3.
 
 ## If something fails
 

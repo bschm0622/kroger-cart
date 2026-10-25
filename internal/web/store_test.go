@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// A staples file must round-trip through load and save with selections intact.
-// The comment prefix doubles as the selection toggle, so a save that lost it
-// would silently put every item on the order.
 func TestStaplesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "staples.tsv")
@@ -39,7 +36,6 @@ func TestStaplesRoundTrip(t *testing.T) {
 	if m := byUPC["0001111041660"]; m.Selected {
 		t.Error("a commented line must parse as unselected")
 	}
-	// "#1" with no space is what a hand edit produces.
 	if c, ok := byUPC["0001111008887"]; !ok || c.Selected {
 		t.Errorf("chips parsed as %+v (ok=%v)", c, ok)
 	}
@@ -61,7 +57,6 @@ func TestStaplesRoundTrip(t *testing.T) {
 		}
 	}
 
-	// The rewritten header must not parse back as items on the next load.
 	out, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +66,6 @@ func TestStaplesRoundTrip(t *testing.T) {
 	}
 }
 
-// A missing staples file means "nothing seeded yet", not an error — the UI's
-// first-run path depends on it.
 func TestLoadStaplesMissingFileIsEmpty(t *testing.T) {
 	items, err := LoadStaples(filepath.Join(t.TempDir(), "absent.tsv"))
 	if err != nil {
@@ -93,7 +86,6 @@ func TestLoadStaplesRejectsBadQuantity(t *testing.T) {
 	}
 }
 
-// A name containing a tab would shift every later column on reload.
 func TestSaveStaplesNeutralizesTabsInNames(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "staples.tsv")
 	if err := SaveStaples(path, []Staple{{UPC: "1", Quantity: 1, Name: "Milk\t1 gal", Selected: true}}); err != nil {
@@ -147,8 +139,6 @@ func TestRecipeRoundTrip(t *testing.T) {
 	}
 }
 
-// Editing an existing recipe must overwrite its file rather than create a
-// second one under a slug derived from the new name.
 func TestSaveRecipeKeepsSlugOnRename(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "recipes")
 	first, err := SaveRecipe(dir, Recipe{Name: "Tacos"})
@@ -171,8 +161,6 @@ func TestSaveRecipeKeepsSlugOnRename(t *testing.T) {
 	}
 }
 
-// A slug arrives from the client, so it must not be able to reach outside the
-// recipes directory.
 func TestDeleteRecipeRejectsPathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	victim := filepath.Join(dir, "keepme.toml")
@@ -193,8 +181,6 @@ func TestRecipeNeedsAName(t *testing.T) {
 	if _, err := SaveRecipe(t.TempDir(), Recipe{Name: "  "}); err == nil {
 		t.Fatal("want an error for a blank name")
 	}
-	// A name of only punctuation slugifies to nothing, which would write to
-	// ".toml" — reject it rather than create an invisible file.
 	if _, err := SaveRecipe(t.TempDir(), Recipe{Name: "!!!"}); err == nil {
 		t.Fatal("want an error for a name with no usable characters")
 	}

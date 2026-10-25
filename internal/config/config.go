@@ -230,13 +230,15 @@ func (c *Config) SaveTokens(clientID, clientSecret, accessToken, refreshToken st
 	return c.save()
 }
 
-// SaveHeaders merges static request headers into the config and writes it.
-// Existing headers with other names are kept.
-func (c *Config) SaveHeaders(h map[string]string) error {
+// ReplaceHeaders drops the named headers, then saves the given ones.
+func (c *Config) ReplaceHeaders(drop []string, set map[string]string) error {
 	if c.Headers == nil {
 		c.Headers = map[string]string{}
 	}
-	for k, v := range h {
+	for _, k := range drop {
+		delete(c.Headers, k)
+	}
+	for k, v := range set {
 		c.Headers[k] = v
 	}
 	return c.save()

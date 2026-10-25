@@ -1,13 +1,3 @@
-// Command fakekroger stands in for kroger.com in the end-to-end tests, so they
-// exercise the real page and server without touching anyone's account.
-//
-// It answers the five endpoints the page uses with a small fixed catalog, and
-// keeps a cart that PUTs actually change. Test controls:
-//
-//	POST /__reset   starting cart, no failures
-//	GET  /__cart    the cart now
-//	POST /__cart    replace the cart: {"upc": qty, ...}
-//	POST /__fail    {"path": "products"|"carts", "status": 429, "times": 3}
 package main
 
 import (
@@ -27,8 +17,6 @@ type product struct {
 	Message                       string
 }
 
-// The catalog. 0000000000104 is deliberately absent: a staple Kroger no longer
-// carries comes back as nothing at all.
 var catalog = map[string]product{
 	"0000000000101": {UPC: "0000000000101", Name: "Test Whole Milk", Size: "1 gal", Price: "USD 3.49", Level: "HIGH", Sellable: true},
 	"0000000000102": {UPC: "0000000000102", Name: "Test Bananas", Size: "1 bunch", Price: "USD 0.59", Level: "LOW", Sellable: true},
@@ -37,11 +25,8 @@ var catalog = map[string]product{
 	"0000000000106": {UPC: "0000000000106", Name: "Test Coffee Beans", Size: "12 oz", Price: "USD 9.99", Level: "TEMPORARILY_OUT_OF_STOCK", Message: "Item Out of Stock"},
 }
 
-// startCart holds the out-of-stock olive oil, so tests can check it can be
-// removed but not raised.
 func startCart() map[string]int { return map[string]int{"0000000000103": 1} }
 
-// A 1×1 PNG, served as every product picture.
 var pixel, _ = base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 func main() {

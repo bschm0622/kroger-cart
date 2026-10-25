@@ -12,19 +12,10 @@ import (
 	"github.com/bschm0622/kroger-cart/internal/config"
 )
 
-// storeHeaders are the request headers that tell Kroger which store you shop.
-// Product search fails with 400 LAF_OBJECTS_REQUIRED without x-laf-object. They
-// describe a store rather than a person, but kroger.com only ever sends them as
-// headers, so the one way to get them is from a request the site made.
 var storeHeaders = []string{"x-laf-object", "x-modality", "x-geo-location-v1", "x-facility-id"}
 
-// curlHeader matches one -H/--header argument of a "Copy as cURL" paste, in
-// any of the quoting styles Chrome emits: '...', "...", or bash's $'...'.
 var curlHeader = regexp.MustCompile(`(?s)(?:-H|--header)\s+(?:\$'((?:[^'\\]|\\.)*)'|'([^']*)'|"((?:[^"\\]|\\.)*)")`)
 
-// parseStoreHeaders pulls the store headers out of a pasted request, given
-// either as "Copy as cURL" or as "Copy request headers" (one "name: value" per
-// line). Header names are matched case-insensitively.
 func parseStoreHeaders(raw string) map[string]string {
 	var lines []string
 	if m := curlHeader.FindAllStringSubmatch(raw, -1); len(m) > 0 {
@@ -89,7 +80,7 @@ func newAuthSetStoreCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return configErr(err)
 			}
-			if err := cfg.SaveHeaders(found); err != nil {
+			if err := cfg.ReplaceHeaders(storeHeaders, found); err != nil {
 				return configErr(fmt.Errorf("saving store headers: %w", err))
 			}
 			names := make([]string, 0, len(found))

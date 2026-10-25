@@ -72,8 +72,6 @@ function loadDraft() {
 const saveDraft = () => localStorage.setItem(DRAFT_KEY, JSON.stringify([...state.draft.values()]));
 loadDraft();
 
-// --- transport ---------------------------------------------------------------
-
 let bannerTimer = 0;
 function banner(msg, kind, action) {
   const b = $('#banner');
@@ -132,8 +130,6 @@ async function run(fn) {
 
 const post = (path, body, opts) => api(path, { method: 'POST', body: JSON.stringify(body ?? {}), ...opts });
 const put = (path, body) => api(path, { method: 'PUT', body: JSON.stringify(body) });
-
-// --- session and store -------------------------------------------------------
 
 function showCookieBox(message) {
   const box = $('#cookie-box');
@@ -214,8 +210,6 @@ function renderStore() {
 
 const storeKey = () => state.status?.store?.id || 'default';
 
-// --- the kroger cart ---------------------------------------------------------
-
 const stapleFor = (upc) => state.staples.find((s) => s.upc === upc);
 const usual = () => state.staples.filter((s) => s.selected);
 const inCart = (upc) => state.cart.lines.reduce((n, l) => n + (l.upc === upc ? l.quantity : 0), 0);
@@ -246,9 +240,8 @@ async function readCart({ quiet } = {}) {
   renderEverything();
 }
 
-// A pending change remembers what the cart held when it was made. If the cart
-// has changed since (the Kroger app, another tab), an increase still means "at
-// least this many" and a decrease is dropped rather than applied blind.
+// A pending change remembers the cart it was made against. If the cart changed
+// elsewhere, an increase becomes "at least this many"; a decrease is dropped.
 function rebaseDraft() {
   let adjusted = 0;
   for (const d of [...state.draft.values()]) {
@@ -290,8 +283,7 @@ function setQty(item, qty) {
   renderBasket();
 }
 
-// 'atLeast' brings each item up to a quantity (your usual, a past trip);
-// 'add' adds on top of what's there (a recipe).
+// 'atLeast' raises to a quantity (your usual, a past trip); 'add' adds on top (a recipe).
 function addMany(items, mode = 'atLeast') {
   let n = 0;
   for (const it of items) {
@@ -338,8 +330,6 @@ function cartToBe() {
   return [...out.values()].filter((l) => l.qty > 0);
 }
 
-// --- what Kroger says about products -----------------------------------------
-
 function noteStock(items) {
   for (const it of items) {
     if (!it?.upc) continue;
@@ -372,8 +362,7 @@ function priceBits(upc) {
     : [d.price];
 }
 
-// Answers are kept for half an hour so a reload doesn't re-ask Kroger about
-// every staple; Update Kroger cart re-checks stock on the server anyway.
+// Lookups are cached for 30 minutes; the server re-checks stock before adding anything.
 async function lookUp(upcs) {
   const todo = [...new Set(upcs)].filter(Boolean);
   if (!todo.length) return;
@@ -402,8 +391,6 @@ async function lookUp(upcs) {
   for (const [upc, v] of Object.entries(cache)) if (now - v.t >= LOOKUP_TTL) delete cache[upc];
   try { localStorage.setItem(key, JSON.stringify(cache)); } catch { /* storage full */ }
 }
-
-// --- controls and rows -------------------------------------------------------
 
 const controls = new Map();
 
@@ -478,7 +465,6 @@ function itemRow(item, { meta, after } = {}) {
 
 const emptyRow = (text) => el('div', { className: 'item empty', textContent: text });
 
-// Re-rendering a list mustn't lose the button you were on.
 function keepingFocus(container, render) {
   const active = document.activeElement;
   const label = container.contains(active) ? active.getAttribute('aria-label') : null;
@@ -492,8 +478,6 @@ function renderEverything() {
   if (loaded.has('history')) renderHistory();
   renderBasket();
 }
-
-// --- tabs --------------------------------------------------------------------
 
 let currentTab = 'staples';
 const loaded = new Set();
@@ -521,8 +505,6 @@ async function loadTab(tab, force) {
   if (tab === 'history') await loadHistory();
   if (tab === 'search') renderFind();
 }
-
-// --- cart panel ----------------------------------------------------------------
 
 function panelLine(l, note) {
   const qty = targetQty(l.upc);
@@ -705,8 +687,6 @@ $('#basket-to-usual').onclick = () => {
   banner(`Saved ${plural(lines.length, 'item')} as your usual.`, 'ok');
 };
 
-// --- staples -------------------------------------------------------------------
-
 async function loadStaples() {
   try {
     const out = await api('/api/staples');
@@ -724,8 +704,7 @@ async function loadStaples() {
   if (state.staplesLoaded) lookUp(state.staples.map((s) => s.upc)).then(renderEverything);
 }
 
-// Saves go one at a time, each sending the version it last saw; the server
-// refuses to write over a file that changed on disk in the meantime.
+// Saves run one at a time and carry the file version, so hand edits are never overwritten.
 let saveChain = Promise.resolve();
 function saveStaples() {
   if (!state.staplesLoaded) return saveChain;
@@ -816,8 +795,6 @@ $('#staples-seed').onclick = () => run(async () => {
   lookUp(state.staples.map((s) => s.upc)).then(renderEverything);
 });
 
-// --- search --------------------------------------------------------------------
-
 function renderFind() {
   const list = $('#find-list');
   keepingFocus(list, () => {
@@ -847,8 +824,6 @@ $('#find-form').onsubmit = (e) => {
     renderFind();
   });
 };
-
-// --- recipes -------------------------------------------------------------------
 
 async function loadRecipes() {
   const out = await run(() => api('/api/recipes'));
@@ -973,8 +948,6 @@ $('#recipe-delete').onclick = () => run(async () => {
   banner('Recipe deleted.', 'ok');
 });
 
-// --- past trips ------------------------------------------------------------------
-
 async function loadHistory() {
   const out = await run(() => api('/api/history?size=25'));
   if (!out) return;
@@ -1053,8 +1026,6 @@ function renderHistory() {
     else if (!any) list.append(emptyRow(`Nothing you've bought matches “${state.historyFilter}”.`));
   });
 }
-
-// --- boot ------------------------------------------------------------------------
 
 (async function boot() {
   renderBasket();

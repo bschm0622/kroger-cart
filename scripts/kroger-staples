@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Build a staples list from what you actually buy.
-#
-# Reads your Kroger purchase history, counts how often each UPC appears
-# across distinct trips, resolves product names in bulk, and writes a
-# tab-separated file you can hand-edit:
-#
-#     qty   upc             times   name
-#
-# Every line starts commented out. You uncomment the things you want on
-# the weekly order once, and from then on `kroger-weekly-cart` reads this
-# file. Re-running this script never clobbers your edits — it writes to a
-# .new file and tells you to diff, unless you pass --force.
 set -euo pipefail
 
 CLI="${KROGER_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kroger-pp-cli}"
@@ -43,7 +31,6 @@ done
 
 [ -x "$CLI" ] || { echo "kroger-pp-cli not found at $CLI (build it, or set KROGER_CLI)" >&2; exit 1; }
 
-# KROGER_CONFIG points at a config other than the default (the end-to-end tests use it).
 cli() {
 	if [ -n "${KROGER_CONFIG:-}" ]; then "$CLI" --config "$KROGER_CONFIG" "$@"; else "$CLI" "$@"; fi
 }
@@ -57,23 +44,14 @@ fi
 echo "Reading the last $TRIPS trips..." >&2
 history_json="$(mktemp)"
 trap 'rm -f "$history_json"' EXIT
-# --data-source live is not optional here. Under "auto" a network-level
-# failure (which is what a stale session looks like) falls back to the local
-# synced store, and the fallback is silent under --json. A staples list is
-# only meaningful if it came from your actual history, so fail instead.
 cli orders history --size "$TRIPS" --json --no-cache --data-source live >"$history_json"
 
-# Frequency count, then bulk name resolution. Names come from a second
-# call because purchase history returns bare UPCs and nothing else.
 upcs="$(python3 - "$history_json" "$MIN_TIMES" <<'PY'
 import json, sys
 from collections import Counter
 
 with open(sys.argv[1]) as fh:
     trips = json.load(fh)["results"]["data"]["postOrderSearch"]["data"]
-# One trip counts once. Buying three bananas on one visit is not the same
-# signal as buying bananas on three separate visits, and it is the second
-# one that makes something a staple.
 counts = Counter()
 for t in trips:
     counts.update({li["upc"] for li in t.get("lineItems") or [] if li.get("upc")})
@@ -97,8 +75,6 @@ count="$(printf '%s\n' "$upcs" | grep -c . || true)"
 [ "$count" -gt 0 ] || { echo "No item was bought $MIN_TIMES+ times in $TRIPS trips." >&2; exit 1; }
 echo "Resolving names for $count items..." >&2
 
-# Batched because the endpoint rejects an unbounded UPC list, and the
-# client rate-limits to 2 rps anyway.
 names="$(mktemp)"
 trap 'rm -f "$history_json" "$names"' EXIT
 batch=()
@@ -109,10 +85,6 @@ flush() {
 		IFS=,
 		echo "${batch[*]}"
 	)"
-	# --verified=false, deliberately. The verified catalog omits real
-	# groceries — deli-counter and other weighed items are not in it — and
-	# treating a miss as final is what leaves bare barcodes in the list.
-	# The department comes back too, so non-groceries can be dropped below.
 	cli products get --gtin13s "$joined" --json --no-cache --verified=false |
 		python3 -c '
 import json, sys
@@ -147,10 +119,6 @@ flush
 	python3 - "$upcs" "$names" <<'PY'
 import sys
 
-# Departments whose "products" are transaction lines rather than things you
-# can put in a cart: the pickup fee that rides along on every pickup order,
-# and the gas pump. Left in, the fee outranks every actual grocery, because
-# it appears on more trips than anything you eat.
 NON_GROCERY = {"34": "in-store pickup fee", "58": "fuel"}
 
 counts = [ln.split("\t") for ln in sys.argv[1].splitlines() if ln.strip()]

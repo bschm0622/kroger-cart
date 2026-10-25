@@ -45,27 +45,21 @@ func MultiValue(values []string) string {
 }
 
 type Client struct {
-	BaseURL    string
-	Config     *config.Config
-	HTTPClient *http.Client
-	DryRun     bool
-	NoCache    bool
-	// NoRetryOn429 returns a rate-limit answer straight away instead of
-	// sleeping and retrying. The web UI sets it: a page waiting 15 seconds
-	// behind "Working…" is worse than saying "Kroger is limiting requests".
-	NoRetryOn429 bool
+	BaseURL      string
+	Config       *config.Config
+	HTTPClient   *http.Client
+	DryRun       bool
+	NoCache      bool
+	NoRetryOn429 bool // return a 429 at once instead of sleeping and retrying
 	cacheDir     string
 	limiter      *cliutil.AdaptiveLimiter
 }
 
-// Limiter and ShareLimiter let a long-running caller (the web UI) pace every
-// request through one limiter, rather than giving each request a fresh one
-// that knows nothing about the others.
+// Limiter and ShareLimiter let the web UI pace every request through one limiter.
 func (c *Client) Limiter() *cliutil.AdaptiveLimiter       { return c.limiter }
 func (c *Client) ShareLimiter(l *cliutil.AdaptiveLimiter) { c.limiter = l }
 
-// ModalityType is how this person shops — PICKUP, DELIVERY, … — from the
-// x-modality store header that `auth set-store` saves, defaulting to PICKUP.
+// ModalityType is PICKUP, DELIVERY, … from the saved x-modality header.
 func ModalityType(cfg *config.Config) string {
 	if cfg != nil {
 		var m struct {

@@ -1,13 +1,3 @@
-// Package browser reads the Kroger session out of a local browser profile.
-//
-// Kroger's session is a cookie jar, and the awkward part of using this tool has
-// always been getting that jar out of the browser: open DevTools, find a
-// request that returned 200, right-click the Cookie header, paste. Chrome
-// already stores the whole jar on disk, including the httpOnly Akamai cookies
-// that a page script cannot see, so it can be read directly instead.
-//
-// This only ever reads. It touches the caller's own cookie database with their
-// own keychain key, which is the same access the caller already has by hand.
 package browser
 
 import (
@@ -31,9 +21,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Chrome's cookie encryption on macOS. These constants are Chrome's, not ours:
-// the key is PBKDF2 over a keychain secret with a fixed salt and iteration
-// count, and the IV is sixteen spaces.
 const (
 	keychainService = "Chrome Safe Storage"
 	keychainAccount = "Chrome"
@@ -43,7 +30,6 @@ const (
 	valuePrefix     = "v10"
 )
 
-// Profile is one Chrome profile that holds Kroger cookies.
 type Profile struct {
 	Name        string // e.g. "Default", "Profile 1"
 	CookiesPath string
@@ -51,16 +37,10 @@ type Profile struct {
 	LastUpdate  int64 // newest Kroger cookie, in Chrome's epoch
 }
 
-// ErrUnsupported is returned on platforms this has not been written for.
 var ErrUnsupported = errors.New("reading browser cookies is only implemented for Chrome on macOS")
 
-// ErrNoProfile is returned when no Chrome profile holds Kroger cookies —
-// usually because the user is signed in on a different browser.
 var ErrNoProfile = errors.New("no Chrome profile has any kroger.com cookies; sign in to kroger.com in Chrome first")
 
-// ChromeJar returns a Cookie header value for www.kroger.com built from a local
-// Chrome profile. An empty profile name picks the profile with the most
-// recently updated Kroger cookies, which is the one you were just browsing in.
 func ChromeJar(profileName string) (jar string, chosen Profile, err error) {
 	if runtime.GOOS != "darwin" {
 		return "", Profile{}, ErrUnsupported
@@ -101,8 +81,6 @@ func ChromeJar(profileName string) (jar string, chosen Profile, err error) {
 	return strings.Join(pairs, "; "), chosen, nil
 }
 
-// ChromeProfiles lists the Chrome profiles that hold Kroger cookies, most
-// recently updated first.
 func ChromeProfiles() ([]Profile, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, ErrUnsupported
@@ -125,8 +103,6 @@ func ChromeProfiles() ([]Profile, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// Chrome names profiles "Default" and "Profile N"; every other
-		// directory here is Chrome's own state, not a profile.
 		if e.Name() != "Default" && !strings.HasPrefix(e.Name(), "Profile ") {
 			continue
 		}
@@ -149,11 +125,7 @@ func profileNames(ps []Profile) string {
 	return strings.Join(names, ", ")
 }
 
-// chromeKey derives the AES key from the "Chrome Safe Storage" keychain item.
-//
-// The secret is read via the security(1) binary rather than a Keychain API
-// binding, because that is what makes macOS show its own "allow access?"
-// dialog naming a tool the user recognises.
+// Chrome encrypts cookie values with AES-128-CBC under a PBKDF2 key from this keychain item.
 func chromeKey() ([]byte, error) {
 	cmd := exec.Command("security", "find-generic-password",
 		"-w", "-s", keychainService, "-a", keychainAccount)
@@ -166,13 +138,9 @@ func chromeKey() ([]byte, error) {
 	if secret == "" {
 		return nil, errors.New("the Chrome Safe Storage keychain item is empty")
 	}
-	// SHA-1 is Chrome's choice here, not ours; it is the only thing that
-	// derives the key Chrome actually encrypted with.
 	return pbkdf2.Key([]byte(secret), []byte(pbkdf2Salt), pbkdf2Rounds, keyLen, sha1.New), nil
 }
 
-// countKrogerCookies reports how many Kroger cookies a profile holds without
-// decrypting anything, so profile selection needs no keychain access.
 func countKrogerCookies(path string) (int, int64, error) {
 	db, cleanup, err := openSnapshot(path)
 	if err != nil {
@@ -189,7 +157,6 @@ func countKrogerCookies(path string) (int, int64, error) {
 	return n, last.Int64, nil
 }
 
-// readCookies decrypts the cookies that a request to www.kroger.com would send.
 func readCookies(path string, key []byte) ([]string, error) {
 	db, cleanup, err := openSnapshot(path)
 	if err != nil {
@@ -197,12 +164,7 @@ func readCookies(path string, key []byte) ([]string, error) {
 	}
 	defer cleanup()
 
-	// Host-only and domain cookies for www.kroger.com, at the root path.
-	// Subdomain jars (login.kroger.com) are deliberately excluded: they are
-	// not sent to www.kroger.com, and including them has produced 403s.
-	//
-	// Ordered oldest-first so that if a name somehow appears twice, the
-	// fresher value is the one that survives into the map below.
+	// login.kroger.com cookies are left out: they aren't sent to www.kroger.com and have caused 403s.
 	rows, err := db.Query(`SELECT host_key, name, encrypted_value FROM cookies
 	                       WHERE host_key IN ('.kroger.com', 'www.kroger.com')
 	                         AND path = '/'
@@ -222,8 +184,6 @@ func readCookies(path string, key []byte) ([]string, error) {
 		}
 		plain, err := decrypt(blob, key, host)
 		if err != nil {
-			// One unreadable cookie should not sink the jar; a cookie
-			// written by a different Chrome build can be skipped.
 			continue
 		}
 		if _, seen := values[name]; !seen {
@@ -242,7 +202,6 @@ func readCookies(path string, key []byte) ([]string, error) {
 	return pairs, nil
 }
 
-// decrypt reverses Chrome's v10 cookie encryption.
 func decrypt(blob, key []byte, host string) (string, error) {
 	if len(blob) <= len(valuePrefix) || string(blob[:len(valuePrefix)]) != valuePrefix {
 		return "", fmt.Errorf("not a %s value", valuePrefix)
@@ -264,20 +223,13 @@ func decrypt(blob, key []byte, host string) (string, error) {
 	}
 	out = out[:len(out)-pad]
 
-	// Chrome binds a cookie to its domain by prefixing the plaintext with
-	// sha256(host_key). Older values have no prefix, so this is conditional
-	// rather than assumed.
 	if sum := sha256.Sum256([]byte(host)); len(out) >= len(sum) && string(out[:len(sum)]) == string(sum[:]) {
 		out = out[len(sum):]
 	}
 	return string(out), nil
 }
 
-// openSnapshot copies the cookie database before opening it.
-//
-// Chrome holds the live file open, and reading it in place risks both a lock
-// error and a torn read. The copy is deleted by the returned cleanup — it holds
-// decryptable session cookies, so it does not outlive the call.
+// Chrome holds the live database open, so it is copied first; the copy holds live cookies and is deleted.
 func openSnapshot(path string) (*sql.DB, func(), error) {
 	src, err := os.Open(path)
 	if err != nil {

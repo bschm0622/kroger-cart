@@ -27,19 +27,28 @@ do.
 ## What the page does
 
 - **Staples:** everything you've bought on two or more trips, most-bought
-  first, built from your order history.
+  first, built from your order history, with prices, pictures and stock.
 - **Search:** anything on kroger.com, including things you've never bought.
-- **Recipes:** named groups of products that go into the cart together.
+- **Recipes:** named groups of products; adding one adds every ingredient on
+  top of what's already in the cart.
 - **Past trips:** open an old order and add any of it back.
 - **Your Kroger cart**, alongside every tab: each Add and − / + edits it, and
   changes wait until you press **Update Kroger cart**, so you can see what's
   new, changed or being removed before anything is sent.
-- **Your usual:** a saved set of staples that one click brings the cart up to.
+- **Your usual:** star the staples you buy every week, and **Add your usual**
+  brings the cart up to them in one click.
+- **Out-of-stock items can't be added**, from any tab; they're marked, and
+  staples Kroger can't sell right now sit at the bottom.
+- An estimated total, sale prices, and pickup or delivery, whichever you use.
 
 ## Requirements
 
-- macOS and Google Chrome, signed in to kroger.com. (Other setups work, but
-  you'll copy your session by hand; see [AUTH-SETUP.md](AUTH-SETUP.md).)
+- A **kroger.com** account. Ralphs, Fred Meyer, King Soopers, Smith's, Fry's,
+  QFC and other Kroger-family stores use their own sites, which this doesn't
+  support.
+- A Mac with Google Chrome, signed in to kroger.com. (Other browsers work, but
+  you'll copy your session by hand; see [AUTH-SETUP.md](AUTH-SETUP.md).) The
+  page runs on your Mac and is only reachable from it, not from your phone.
 - Go 1.26.4 or newer.
 - A Kroger account with past orders, if you want the staples list.
 
@@ -95,7 +104,7 @@ Everything stays on your machine, in `~/.config/kroger-pp-cli/`:
 
 - `config.toml`: your store headers and Kroger session.
 - `staples.tsv`: your staples. Plain text, one item per line; lines without a
-  leading `#` are your usual.
+  leading `#` are your usual (the starred ones on the page).
 - `recipes/`: one small TOML file per recipe.
 
 Pending cart changes are kept in your browser until you send them.
@@ -110,8 +119,10 @@ The same staples file drives two scripts, for when you'd rather type:
 ./scripts/kroger-weekly-cart          # add your usual to the cart
 ```
 
-Like the page, the script leaves out anything Kroger says is out of stock and
-lists what it skipped.
+Like the page, the script leaves out anything Kroger says is out of stock, and
+it never lowers a quantity already in your cart. `--clear` makes the cart
+exactly your usual: it adds first and removes the rest after, so a failure
+can't leave you with an empty cart.
 
 `./kroger-pp-cli --help` lists every command, and there's an MCP server
 (`./cmd/kroger-pp-mcp`) and a Claude skill (`SKILL.md`) for using it from an AI
@@ -119,6 +130,14 @@ agent. Problems signing in are covered in [AUTH-SETUP.md](AUTH-SETUP.md),
 including a table of common errors.
 
 ## Command reference
+
+### Getting set up
+
+- **`kroger-pp-cli serve`** - Open the page (`--addr` to change the port, `--no-open` to not open a browser)
+- **`kroger-pp-cli auth from-chrome`** - Sign in by reading your Kroger session from Chrome
+- **`kroger-pp-cli auth set-store -`** - Save your store from a DevTools "Copy as cURL" on stdin
+- **`kroger-pp-cli auth set-cookie -`** - Save a session copied by hand from DevTools, on stdin
+- **`kroger-pp-cli doctor`** - Check the session and configuration
 
 ### cart
 

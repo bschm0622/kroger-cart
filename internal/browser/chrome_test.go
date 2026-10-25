@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// seal is the encryption side of Chrome's v10 format, so the tests exercise
-// decrypt against values shaped exactly like the ones Chrome writes.
 func seal(t *testing.T, key []byte, plain string, bindTo string) []byte {
 	t.Helper()
 	body := []byte(plain)
@@ -44,8 +42,6 @@ func TestDecryptStripsDomainPrefix(t *testing.T) {
 	}
 }
 
-// Values written by older Chrome builds have no sha256(host_key) prefix, and
-// stripping 32 bytes from those would silently truncate the cookie.
 func TestDecryptWithoutDomainPrefix(t *testing.T) {
 	key := testKey()
 	got, err := decrypt(seal(t, key, "abc123", ""), key, ".kroger.com")
@@ -57,8 +53,6 @@ func TestDecryptWithoutDomainPrefix(t *testing.T) {
 	}
 }
 
-// A cookie whose plaintext happens to be shorter than the prefix must not be
-// mistaken for a prefixed one.
 func TestDecryptShortValue(t *testing.T) {
 	key := testKey()
 	got, err := decrypt(seal(t, key, "1", ""), key, ".kroger.com")

@@ -37,15 +37,6 @@ Kroger grocery CLI — search products, read order history, and add staples to y
 
 This CLI uses Chrome-compatible HTTP transport for browser-facing endpoints. It does not require a resident browser process for normal API calls.
 
-## Discovery Signals
-
-This CLI was generated with browser-observed traffic context.
-- Capture coverage: 88 API entries from 135 total network entries
-- Protocols: rest_json (75% confidence)
-- Generation hints: browser_http_transport, requires_protected_client
-- Candidate command ideas: create_Targeting.php — Derived from observed POST /{id}/Targeting.php traffic.; create_UXQB — Derived from observed POST /UM0BVe/jEjn1/5-y2O/Ig/G5YLhQ5L5pErmp/MWFhNw/DzsBGBxx/UXQB traffic.; create_cart_savings — Derived from observed POST /atlas/v1/carts/v2/cart-savings traffic.; create_details — Derived from observed POST /atlas/v1/purchase-history/v2/details traffic.; create_dont_forget_usual_products — Derived from observed POST /atlas/v1/recommendations/v1/dont-forget-usual-products traffic.; create_echoData — Derived from observed POST /clickstream/v1/echoData traffic.; create_events — Derived from observed POST /clickstream/v1/events traffic.; create_prioritized_carousels — Derived from observed POST /atlas/v1/search/v1/prioritized-carousels traffic.
-- Caveats: empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.; empty_payload: API-looking request returned an empty or null payload; schema confidence is weak.
-
 ## Command Reference
 
 **cart** — Add items to your Kroger cart

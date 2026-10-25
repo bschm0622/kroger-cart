@@ -1,11 +1,3 @@
-// Package web serves a local single-page UI over the same authenticated
-// client the CLI uses, so the weekly grocery order can be assembled by
-// clicking rather than by hand-editing a TSV file.
-//
-// It binds to localhost only and has no authentication of its own: the saved
-// Kroger session is bearer-equivalent, so exposing this port to a network
-// would hand over order history, saved addresses, and the ability to place
-// orders. See Server.Addr.
 package web
 
 import (
@@ -20,8 +12,6 @@ import (
 	"github.com/bschm0622/kroger-cart/internal/client"
 )
 
-// Item is a product as the UI needs it: enough to show a row and to build a
-// cart line item from it.
 type Item struct {
 	UPC   string `json:"upc"`
 	Name  string `json:"name"`
@@ -29,54 +19,36 @@ type Item struct {
 	Image string `json:"image,omitempty"`
 	Price string `json:"price,omitempty"`
 
-	// Availability for the way you shop (pickup unless your x-modality header
-	// says otherwise). Stock is Kroger's inventory level, e.g. HIGH, LOW or
-	// TEMPORARILY_OUT_OF_STOCK. Unavailable is set, with Kroger's own message,
-	// when the item can't be ordered that way right now; it stays empty when
-	// Kroger said nothing either way, rather than guessing.
-	Stock string `json:"stock,omitempty"`
-	// WasPrice is the regular price when Price is a sale price.
+	Stock       string `json:"stock,omitempty"`
 	WasPrice    string `json:"wasPrice,omitempty"`
 	Unavailable string `json:"unavailable,omitempty"`
 	MaxQty      int    `json:"maxQty,omitempty"`
 
-	// DeptCode drives Orderable; it is not shown, so it stays off the wire.
 	DeptCode string `json:"-"`
 }
 
-// CartLine is one line currently in the Kroger cart. ID is server-assigned and
-// required to change or remove the line.
 type CartLine struct {
-	ID       string `json:"id"`
-	UPC      string `json:"upc"`
-	Quantity int    `json:"quantity"`
-	Modality string `json:"modality,omitempty"`
-	Name     string `json:"name,omitempty"`
-	// Unavailable carries Item.Unavailable, so the cart can flag what Kroger
-	// says it can't fill.
+	ID          string `json:"id"`
+	UPC         string `json:"upc"`
+	Quantity    int    `json:"quantity"`
+	Modality    string `json:"modality,omitempty"`
+	Name        string `json:"name,omitempty"`
 	Unavailable string `json:"unavailable,omitempty"`
 }
 
-// Trip is one past purchase.
 type Trip struct {
-	Date       string   `json:"date"`
-	Total      string   `json:"total"`
-	Type       string   `json:"type"`
-	ReceiptKey string   `json:"receiptKey"`
-	UPCs       []string `json:"upcs"`
-	// Counts is how many of each UPC the trip bought.
-	Counts map[string]int `json:"counts"`
+	Date       string         `json:"date"`
+	Total      string         `json:"total"`
+	Type       string         `json:"type"`
+	ReceiptKey string         `json:"receiptKey"`
+	UPCs       []string       `json:"upcs"`
+	Counts     map[string]int `json:"counts"`
 }
 
-// api wraps the CLI's client with the response-shape knowledge the UI needs.
-// Every method returns a plain Go value so handlers stay free of JSON pathing.
 type api struct {
 	c *client.Client
 }
 
-// modality is how you shop — PICKUP, DELIVERY, … — read from the x-modality
-// store header saved by `auth set-store`. Availability differs by modality, so
-// it decides which of Kroger's per-modality answers counts.
 func (a *api) modality() string { return client.ModalityType(a.c.Config) }
 
 const (
@@ -86,18 +58,9 @@ const (
 	pathSearch   = "/atlas/v1/search/v1/products-search"
 	pathHistory  = "/atlas/v1/post-order/v1/purchase-history-search"
 
-	// productProjections mirrors the CLI's default. items.full carries the
-	// description and size the UI shows; offers.compact carries price.
 	productProjections = "items.full,offers.compact,nutrition.label,inventory.projected"
 )
 
-// Cart returns the active cart's id and its current lines.
-//
-// An account can hold a saved-for-later cart alongside the live one, so the
-// ACTIVE type is matched rather than the first entry.
-// errNoActiveCart means the account has no live cart yet. Kroger creates one
-// the first time anything is added on kroger.com, and there's no API to make
-// one, so the page tells the person to do exactly that.
 var errNoActiveCart = errors.New("this Kroger account has no active cart yet")
 
 func (a *api) Cart(ctx context.Context) (string, []CartLine, error) {
@@ -140,17 +103,12 @@ func (a *api) Cart(ctx context.Context) (string, []CartLine, error) {
 	return "", nil, errNoActiveCart
 }
 
-// wantLine is a requested quantity for a UPC.
 type wantLine struct {
 	UPC      string `json:"upc"`
 	Quantity int    `json:"qty"`
 }
 
-// AddToCart sets the quantity of each requested UPC in the cart.
-//
-// The API sets rather than increments, so adding the same list twice is a
-// no-op rather than a double order — which is what makes the weekly button
-// safe to press again when you're not sure whether it went through.
+// AddToCart sets quantities rather than adding to them, so sending a list twice is harmless.
 func (a *api) AddToCart(ctx context.Context, cartID string, want []wantLine, modality string) error {
 	if len(want) == 0 {
 		return fmt.Errorf("nothing selected")
@@ -166,15 +124,12 @@ func (a *api) AddToCart(ctx context.Context, cartID string, want []wantLine, mod
 	return err
 }
 
-// lineEdit is a new quantity for a line already in the cart; 0 removes it.
 type lineEdit struct {
 	Line     CartLine
 	Quantity int
 }
 
-// EditLines changes lines already in the cart, addressed by their server id,
-// in one write. New products go through AddToCart instead: a fresh add must
-// not carry an id.
+// EditLines edits lines already in the cart by id; quantity 0 removes one. An empty lineItems array is rejected.
 func (a *api) EditLines(ctx context.Context, cartID string, edits []lineEdit) error {
 	if len(edits) == 0 {
 		return nil
@@ -187,6 +142,7 @@ func (a *api) EditLines(ctx context.Context, cartID string, edits []lineEdit) er
 	return err
 }
 
+// A fresh add must not carry an id; Kroger rejects an empty one.
 func lineItem(upc string, qty int, modality, id string) map[string]any {
 	if modality == "" {
 		modality = "PICKUP"
@@ -199,30 +155,14 @@ func lineItem(upc string, qty int, modality, id string) map[string]any {
 		"substitutionPolicy": "SHOPPER_CHOICE",
 		"savedForLater":      false,
 	}
-	// The id is only present when editing a line that already exists; sending
-	// an empty one on a fresh add is rejected.
 	if id != "" {
 		item["id"] = id
 	}
 	return item
 }
 
-// Products resolves UPCs to names in bulk.
-//
-// The UPC list is sent as a repeated query key. Comma-joining it draws an
-// Akamai "Access Denied" HTML interstitial instead of a result, and batches are
-// capped because the endpoint rejects an unbounded list.
-//
-// Anything the verified catalog does not carry is retried unverified. Real
-// groceries land there — deli-counter and other weighed items are absent from
-// the verified catalog, and a history tab full of bare barcodes is the result of
-// taking the first miss as final.
-//
-// unchecked lists the UPCs Kroger was never asked about because a request
-// failed (a 429 part-way through 160 staples, say). They are unknown, not
-// missing: callers must not treat them as "not sold here". A UPC that is
-// neither in found nor in unchecked was asked about in both catalogs and
-// Kroger has nothing for it.
+// Products looks UPCs up in both catalogs: deli and other weighed items are only in the unverified one.
+// unchecked lists UPCs never answered for (a failed request); they are unknown, not missing.
 func (a *api) Products(ctx context.Context, upcs []string) (found map[string]Item, unchecked []string, err error) {
 	found = make(map[string]Item, len(upcs))
 	if failed, err := a.products(ctx, upcs, true, found); err != nil {
@@ -242,15 +182,13 @@ func (a *api) Products(ctx context.Context, upcs []string) (found map[string]Ite
 	return found, nil, nil
 }
 
-// products looks UPCs up in batches. On a failed request it stops — carrying
-// on into a rate limit only digs the hole deeper — and returns every UPC it
-// didn't get an answer for.
 func (a *api) products(ctx context.Context, upcs []string, verified bool, out map[string]Item) ([]string, error) {
 	const batch = 24
 	mod := a.modality()
 	for start := 0; start < len(upcs); start += batch {
 		end := min(start+batch, len(upcs))
 		raw, err := a.c.GetNoCache(ctx, pathProducts, map[string]string{
+			// Repeated keys, not comma-joined: Akamai answers a comma list with an Access Denied page.
 			"filter.gtin13s":  client.MultiValue(upcs[start:end]),
 			"filter.verified": strconv.FormatBool(verified),
 			"projections":     productProjections,
@@ -276,10 +214,7 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 							URL  string `json:"url"`
 						} `json:"images"`
 					} `json:"item"`
-					// One summary per way of shopping. This, not
-					// sourceLocations[].modalityAvailabilities, is what says
-					// an item is out of stock: the latter still reports
-					// pickup as available for an item Kroger won't sell.
+					// This, not modalityAvailabilities, says an item is out of stock: the latter still says "available".
 					FulfillmentSummaries []struct {
 						Type    string `json:"type"`
 						Regular struct {
@@ -344,9 +279,6 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 	return nil, nil
 }
 
-// dollars turns Kroger's "USD 12.39" into "$12.39". Its ready-made
-// priceString is only filled in for items on sale, so the raw price is the
-// one every product has.
 func dollars(p string) string {
 	if amt, ok := strings.CutPrefix(strings.TrimSpace(p), "USD "); ok {
 		return "$" + amt
@@ -354,30 +286,22 @@ func dollars(p string) string {
 	return p
 }
 
-// nonGroceryDepts are departments whose "products" are transaction lines, not
-// things you can put in a cart: the pickup fee that rides along on every pickup
-// order, and the gas pump. Left in, the fee outranks every actual grocery,
-// because it appears on more trips than anything you eat.
+// Transaction lines that appear on receipts but aren't groceries.
 var nonGroceryDepts = map[string]string{
 	"34": "in-store pickup fee",
 	"58": "fuel",
 }
 
-// Orderable reports whether an item belongs on a shopping list at all.
 func (i Item) Orderable() bool {
 	_, blocked := nonGroceryDepts[i.DeptCode]
 	return !blocked
 }
 
-// Search runs a keyword product search.
-//
-// The wire parameter is filter.query. filter.keyword is silently ignored
-// rather than rejected, which returns a populated-looking envelope with zero
-// products.
 func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, error) {
 	if size <= 0 {
 		size = 24
 	}
+	// The parameter is filter.query; filter.keyword is silently ignored.
 	raw, err := a.c.GetNoCache(ctx, pathSearch, map[string]string{
 		"filter.query":              keyword,
 		"filter.fulfillmentMethods": a.modality(),
@@ -405,10 +329,6 @@ func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, err
 		}
 		items = append(items, Item{UPC: p.UPC, Name: p.Description})
 	}
-	// Search returns only barcodes and a lower-cased description. Price,
-	// size, picture and — the one that matters — whether you can actually
-	// buy it come from the product lookup. A failed lookup still returns the
-	// bare results rather than nothing.
 	upcs := make([]string, len(items))
 	for i, it := range items {
 		upcs[i] = it.UPC
@@ -422,12 +342,11 @@ func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, err
 	return items, nil
 }
 
-// History returns past trips, newest first.
 func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 	if size <= 0 {
 		size = 25
 	}
-	// A GET, despite the "-search" suffix. Posting here returns 405.
+	// A GET despite the "-search" name; POST returns 405.
 	raw, err := a.c.GetNoCache(ctx, pathHistory, map[string]string{
 		"pageNo":   "1",
 		"pageSize": fmt.Sprint(size),
@@ -457,8 +376,6 @@ func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 	}
 	trips := make([]Trip, 0, len(body.Data.PostOrderSearch.Data))
 	for _, t := range body.Data.PostOrderSearch.Data {
-		// A product bought twice is listed twice on the receipt; it's shown
-		// once, with how many.
 		upcs := make([]string, 0, len(t.LineItems))
 		counts := map[string]int{}
 		for _, li := range t.LineItems {
@@ -483,9 +400,6 @@ func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 	return trips, nil
 }
 
-// FrequentUPCs counts how many trips each UPC appears in, most frequent first.
-// This is the same ranking the kroger-staples script produces, computed live so
-// the UI's suggestions don't go stale.
 func frequentUPCs(trips []Trip) []struct {
 	UPC   string `json:"upc"`
 	Times int    `json:"times"`

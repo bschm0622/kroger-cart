@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Starts the real page against the fake Kroger, with a throwaway config and
-# staples file, for the end-to-end tests. Never touches ~/.config.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,7 +16,6 @@ x-modality = '{"type":"PICKUP","locationId":"00000"}'
 x-laf-object = '[{"modality":{"type":"PICKUP","handoffAddress":{"address":{"name":"Test Kroger"}}}}]'
 EOF
 
-# Milk is "your usual"; the rest are staples. 104 is one Kroger no longer has.
 printf '%s\n' \
 	$'1\t0000000000101\t12x\tTest Whole Milk' \
 	$'# 1\t0000000000102\t9x\tTest Bananas' \

@@ -104,9 +104,7 @@ func (s *Server) handleCookieFromChrome(w http.ResponseWriter, r *http.Request) 
 	s.answerWithCheck(w, r, map[string]any{"saved": true, "profile": chosen.Name})
 }
 
-// answerWithCheck reads the cart with the session just saved, so "signed in"
-// is only said when it's true: Chrome may hold a stale session too, or not
-// have written a fresh one to disk yet.
+// answerWithCheck only reports a session as working after reading the cart with it.
 func (s *Server) answerWithCheck(w http.ResponseWriter, r *http.Request, resp map[string]any) {
 	resp["working"] = false
 	a, err := s.api()
@@ -131,8 +129,6 @@ func (s *Server) saveJar(raw string) error {
 	cfg.AuthHeaderVal = ""
 	return cfg.SaveTokens("", "", raw, "", time.Time{})
 }
-
-// --- cart ---
 
 func (s *Server) handleCartGet(w http.ResponseWriter, r *http.Request) {
 	a, err := s.api()
@@ -170,9 +166,7 @@ type skip struct {
 	Reason string `json:"reason"`
 }
 
-// handleCartUpdate takes the quantity each product should end up at (0
-// removes it). Adds and increases are refused for anything Kroger can't sell;
-// lowering or removing is always allowed.
+// handleCartUpdate takes the quantity each product should end at (0 removes it) and refuses adds Kroger can't sell.
 func (s *Server) handleCartUpdate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Items    []wantLine `json:"items"`
@@ -309,8 +303,6 @@ func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": items, "unchecked": unchecked})
 }
 
-// --- staples ---
-
 func staplesVersion(path string) int64 {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -330,8 +322,7 @@ func (s *Server) handleStaplesGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"staples": items, "path": s.paths.staples, "version": staplesVersion(s.paths.staples)})
 }
 
-// handleStaplesPut refuses to write over a file that changed since the page
-// read it (a hand edit, or kroger-staples --force), rather than losing it.
+// handleStaplesPut refuses to overwrite a staples file that changed on disk since the page read it.
 func (s *Server) handleStaplesPut(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Staples []Staple `json:"staples"`
@@ -355,8 +346,6 @@ func (s *Server) handleStaplesPut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"saved": len(body.Staples), "version": staplesVersion(s.paths.staples)})
 }
 
-// handleStaplesSeed rebuilds the list from purchase history, keeping the
-// quantities, usual marks and hand-added items already in it.
 func (s *Server) handleStaplesSeed(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Trips    int `json:"trips"`
@@ -439,8 +428,6 @@ func (s *Server) handleStaplesSeed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"staples": seeded, "trips": len(trips), "version": staplesVersion(s.paths.staples)})
 }
 
-// --- recipes ---
-
 func (s *Server) handleRecipesGet(w http.ResponseWriter, r *http.Request) {
 	recipes, err := LoadRecipes(s.paths.recipes)
 	if err != nil {
@@ -478,8 +465,6 @@ func (s *Server) handleRecipeDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"deleted": body.Slug})
 }
-
-// --- lookup ---
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))

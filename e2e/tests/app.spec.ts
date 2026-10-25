@@ -5,11 +5,6 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// One test per way this could break for someone using it. The fake Kroger
-// (fakekroger) holds: milk (in stock), bananas (low), olive oil (out of stock,
-// and already in the cart), sourdough (in stock), coffee (out of stock), and
-// no answer at all for a discontinued salsa.
-
 const FAKE = 'http://127.0.0.1:18788';
 
 async function fakeCart(): Promise<Record<string, number>> {
@@ -25,7 +20,6 @@ const row = (page: Page, list: string, name: string) =>
 
 async function openStaples(page: Page) {
   await page.goto('/#staples');
-  // Prices arrive with the background stock lookup.
   await expect(row(page, '#staples-list', 'Test Whole Milk')).toContainText('$3.49');
 }
 
@@ -43,7 +37,6 @@ test('staples show price and picture, and what Kroger can’t sell sits under it
   expect(at('Test Whole Milk')).toBeLessThan(at('Unavailable right now'));
 
   await expect(row(page, '#staples-list', 'Test Discontinued Salsa')).toContainText('Not found at your store');
-  // Olive oil is already in the cart, so it shows a stepper; the salsa can't be added at all.
   await expect(row(page, '#staples-list', 'Test Discontinued Salsa').getByRole('button', { name: 'Unavailable' })).toBeDisabled();
 });
 
@@ -58,7 +51,6 @@ test('adding an in-stock staple and updating puts it in the Kroger cart', async 
 });
 
 test('the server refuses an out-of-stock add the page didn’t catch', async ({ page }) => {
-  // A pending change left over from before the item went out of stock.
   await page.addInitScript(() => {
     localStorage.setItem('kroger-cart:draft', JSON.stringify([{ upc: '0000000000103', name: 'Test Olive Oil', qty: 2 }]));
   });
@@ -117,9 +109,7 @@ function rawRequest(method: string, path: string, headers: Record<string, string
 }
 
 test('the server only answers this machine’s own page', async () => {
-  // DNS rebinding: another site's name pointed at 127.0.0.1.
   expect(await rawRequest('GET', '/api/history', { Host: 'evil.example:18787' })).toBe(403);
-  // Another site posting to it from your browser.
   expect(await rawRequest('POST', '/api/cart/update', { Origin: 'https://evil.example', 'Content-Type': 'text/plain' })).toBe(403);
   expect(await fakeCart()).not.toHaveProperty('0000000000105');
 });
@@ -148,7 +138,6 @@ const failFake = (path: string, status: number, times: number) =>
   fetch(`${FAKE}/__fail`, { method: 'POST', body: JSON.stringify({ path, status, times }) });
 
 test('a pending change doesn’t lower a cart that changed somewhere else', async ({ page }) => {
-  // Milk was added here when the cart had none; since then the Kroger app put 3 in.
   await page.addInitScript(() => {
     localStorage.setItem('kroger-cart:draft', JSON.stringify([{ upc: '0000000000101', name: 'Test Whole Milk', qty: 1, from: 0 }]));
   });
@@ -200,7 +189,6 @@ test('kroger-weekly-cart never lowers what’s already in the cart', async () =>
   expect((await fakeCart())['0000000000101']).toBe(3);
 });
 
-// Last: after a rate limit the server pauses its Kroger requests for a minute.
 test('when Kroger rate-limits, nothing is marked missing and you aren’t asked to sign in', async ({ page }) => {
   await failFake('products', 429, 10);
   await page.goto('/#staples');

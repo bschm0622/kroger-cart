@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Put this week's staples in your Kroger cart.
-#
-# Reads the uncommented lines of ~/.config/kroger-pp-cli/staples.tsv,
-# looks up your active cart, and PUTs every item in one request. Then
-# open kroger.com/cart, adjust, and check out.
-#
-# Adding an item you already have in the cart SETS the quantity rather
-# than incrementing it, so running this twice in a row is a no-op, not a
-# double order.
 set -euo pipefail
 
 CLI="${KROGER_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kroger-pp-cli}"
@@ -58,7 +49,6 @@ PY
 )"
 fi
 
-# KROGER_CONFIG points at a config other than the default (the end-to-end tests use it).
 cli() {
 	if [ -n "${KROGER_CONFIG:-}" ]; then "$CLI" --config "$KROGER_CONFIG" "$@"; else "$CLI" "$@"; fi
 }
@@ -97,17 +87,12 @@ print(json.dumps({"lineItems": items}))
 PY
 )"
 
-# Leave out anything Kroger says it can't sell right now, the same rule the
-# page and its server follow. If the lookup fails, go ahead unchecked rather
-# than refusing to fill the cart at all.
 upc_chunks="$(printf '%s' "$body" | python3 -c '
 import json, sys
 upcs = [i["gtin13"] for i in json.load(sys.stdin)["lineItems"]]
 for i in range(0, len(upcs), 24):
     print(",".join(upcs[i:i + 24]))
 ')"
-# A lookup answer runs to about a megabyte, far past what a command-line
-# argument can carry, so the answers go through a temporary file.
 stock="$(mktemp)"
 trap 'rm -f "$stock"' EXIT
 checked=1
@@ -127,7 +112,6 @@ import json, sys
 modality, body = sys.argv[1], json.loads(sys.argv[2])
 with open(sys.argv[3]) as fh:
     stock = fh.read()
-# One JSON document per lookup, possibly pretty-printed: read them one by one.
 docs, dec, pos = [], json.JSONDecoder(), 0
 while True:
     while pos < len(stock) and stock[pos].isspace():
@@ -178,9 +162,7 @@ carts="$(mktemp)"
 trap 'rm -f "$stock" "$carts"' EXIT
 cli cart get --no-cache --json >"$carts"
 
-# Kroger sets quantities rather than adding to them, so the plan is worked out
-# against the cart: never lower what's already there, and with --clear add
-# first and remove the rest after, so a failure can't leave an empty cart.
+# Kroger sets quantities: never lower one, and with --clear add before removing.
 plan="$(python3 - "$body" "$CLEAR" "$carts" <<'PY'
 import json, sys
 
