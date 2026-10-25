@@ -13,3 +13,9 @@
 bin/
 
 .DS_Store
+
+# End-to-end test output
+e2e/node_modules/
+e2e/.tmp/
+e2e/report/
+e2e/test-results/

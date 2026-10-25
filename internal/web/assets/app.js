@@ -156,6 +156,7 @@ async function checkStatus() {
 // --- the kroger cart ---------------------------------------------------------
 
 async function refreshCart() {
+  lastCartRead = Date.now();
   const cart = await run(() => api('/api/cart'));
   state.cartLoaded = !!cart;
   if (cart) {
@@ -176,8 +177,13 @@ async function refreshCart() {
 
 // The cart can change on kroger.com in another tab, so look again whenever
 // you come back to this one.
+// At most once a minute, though: flicking between windows shouldn't turn into
+// a stream of requests Kroger starts refusing.
+let lastCartRead = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.cartLoaded !== null) refreshCart();
+  if (document.visibilityState !== 'visible' || state.cartLoaded === null) return;
+  if (Date.now() - lastCartRead < 60 * 1000) return;
+  refreshCart();
 });
 
 // --- tabs ------------------------------------------------------------------
@@ -263,18 +269,49 @@ const noteImages = (items) => {
 
 // lookUp asks Kroger about UPCs the page knows nothing about yet (staples are
 // a local file). It's quiet and best-effort: a failure just leaves them unknown.
+//
+// Answers are kept in the browser for half an hour, so reloading the page
+// doesn't re-ask Kroger about all 160-odd staples each time (it rate-limits
+// bursts). Stock that's a little stale is safe: Update Kroger cart re-checks
+// on the server before anything is added.
+const LOOKUP_KEY = 'kroger-cart:lookups';
+const LOOKUP_TTL = 30 * 60 * 1000;
+const NOT_FOUND = 'Not found at your store';
+
+function applyLookups(found, upcs) {
+  noteImages(Object.values(found));
+  // A product Kroger didn't return at all can't be ordered either; anything
+  // returned and not marked unavailable is known to be fine.
+  noteStock(upcs.map((upc) => found[upc] || { upc, unavailable: NOT_FOUND }));
+}
+
 async function lookUp(upcs) {
   const todo = [...new Set(upcs)];
   if (!todo.length) return {};
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem(LOOKUP_KEY) || '{}'); } catch { cache = {}; }
+  const now = Date.now();
+  const fresh = todo.filter((upc) => cache[upc] && now - cache[upc].t < LOOKUP_TTL);
+  const found = {};
+  for (const upc of fresh) if (cache[upc].item) found[upc] = cache[upc].item;
+  applyLookups(found, fresh);
+
+  const ask = todo.filter((upc) => !fresh.includes(upc));
+  if (!ask.length) return found;
   try {
-    const out = await api('/api/products', { method: 'POST', body: JSON.stringify({ upcs: todo }), quiet: true });
-    const items = Object.values(out.items || {});
-    noteImages(items);
-    // Anything looked up and not marked unavailable is known to be fine.
-    noteStock(todo.map((upc) => (out.items || {})[upc] || { upc, unavailable: '' }));
-    return out.items || {};
+    const out = await api('/api/products', { method: 'POST', body: JSON.stringify({ upcs: ask }), quiet: true });
+    const items = out.items || {};
+    applyLookups(items, ask);
+    for (const upc of ask) {
+      const it = items[upc];
+      cache[upc] = { t: now, item: it ? { upc, name: it.name, image: it.image, price: it.price, stock: it.stock, unavailable: it.unavailable, maxQty: it.maxQty } : null };
+      if (it) found[upc] = it;
+    }
+    for (const [upc, v] of Object.entries(cache)) if (now - v.t >= LOOKUP_TTL) delete cache[upc];
+    try { localStorage.setItem(LOOKUP_KEY, JSON.stringify(cache)); } catch { /* full: skip caching */ }
+    return found;
   } catch {
-    return {};
+    return found;
   }
 }
 
@@ -636,7 +673,17 @@ function renderStaples() {
     list.append(emptyRow(`None of your staples match “${state.filter}”. Try Search.`));
   }
 
-  for (const s of shown) {
+  // What Kroger can't sell right now goes to the bottom, under its own
+  // heading, so the list you shop from starts with things you can buy.
+  const buyable = shown.filter((s) => !unavailableFor(s.upc));
+  const unavailable = shown.filter((s) => unavailableFor(s.upc));
+  const ordered = [...buyable, ...(unavailable.length ? [null] : []), ...unavailable];
+
+  for (const s of ordered) {
+    if (s === null) {
+      list.append(el('div', { className: 'list-divider', textContent: `Unavailable right now · ${unavailable.length}` }));
+      continue;
+    }
     const label = s.name || s.upc;
     const forget = el('button', { type: 'button', className: 'btn icon-only',
       title: 'Remove from staples', ariaLabel: `Remove ${label} from your staples` }, [icon('trash')]);

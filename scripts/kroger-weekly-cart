@@ -21,6 +21,8 @@ usage() {
 usage: kroger-weekly-cart [--dry-run] [--clear] [--file PATH] [--modality PICKUP|DELIVERY]
 
   --dry-run   print what would be added and exit without touching the cart
+
+Items Kroger says it can't sell right now are left out and listed.
   --clear     empty the cart first, so the order is exactly the staples list
   --file      staples file (default ~/.config/kroger-pp-cli/staples.tsv)
   --modality  fulfillment type for the added lines (default PICKUP)
@@ -73,6 +75,75 @@ print("\n".join(labels), file=sys.stderr)
 print(json.dumps({"lineItems": items}))
 PY
 )"
+
+# Leave out anything Kroger says it can't sell right now, the same rule the
+# page and its server follow. If the lookup fails, go ahead unchecked rather
+# than refusing to fill the cart at all.
+upc_chunks="$(printf '%s' "$body" | python3 -c '
+import json, sys
+upcs = [i["gtin13"] for i in json.load(sys.stdin)["lineItems"]]
+for i in range(0, len(upcs), 24):
+    print(",".join(upcs[i:i + 24]))
+')"
+# A lookup answer runs to about a megabyte, far past what a command-line
+# argument can carry, so the answers go through a temporary file.
+stock="$(mktemp)"
+trap 'rm -f "$stock"' EXIT
+checked=1
+while IFS= read -r chunk; do
+	[ -n "$chunk" ] || continue
+	if ! "$CLI" products get --gtin13s "$chunk" --json >>"$stock" 2>/dev/null; then
+		checked=0
+		echo "Couldn't check stock with Kroger; adding everything unchecked." >&2
+		break
+	fi
+done <<<"$upc_chunks"
+
+if [ "$checked" -eq 1 ]; then
+	body="$(python3 - "$MODALITY" "$body" "$stock" <<'PY'
+import json, sys
+
+modality, body = sys.argv[1], json.loads(sys.argv[2])
+with open(sys.argv[3]) as fh:
+    stock = fh.read()
+# One JSON document per lookup, possibly pretty-printed: read them one by one.
+docs, dec, pos = [], json.JSONDecoder(), 0
+while True:
+    while pos < len(stock) and stock[pos].isspace():
+        pos += 1
+    if pos >= len(stock):
+        break
+    try:
+        doc, pos = dec.raw_decode(stock, pos)
+    except ValueError:
+        break
+    docs.append(doc)
+wanted = {i["gtin13"] for i in body["lineItems"]}
+unavailable = {}
+for doc in docs:
+    try:
+        products = doc["results"]["data"]["products"]
+    except (KeyError, TypeError):
+        continue
+    for p in products:
+        upc = (p.get("item") or {}).get("upc")
+        if upc not in wanted:
+            continue
+        for f in p.get("fulfillmentSummaries") or []:
+            a = f.get("availability") or {}
+            if f.get("type") == modality and a.get("sellable") is False:
+                name = (p.get("item") or {}).get("description") or upc
+                unavailable[upc] = (name, a.get("unavailabilityMessage") or "not available")
+kept = [i for i in body["lineItems"] if i["gtin13"] not in unavailable]
+for upc, (name, why) in unavailable.items():
+    print(f"  skipped: {name} ({why})", file=sys.stderr)
+if not kept:
+    sys.exit("everything on your usual is unavailable right now; nothing to add")
+body["lineItems"] = kept
+print(json.dumps(body))
+PY
+)"
+fi
 
 if [ "$DRY" -eq 1 ]; then
 	echo "" >&2

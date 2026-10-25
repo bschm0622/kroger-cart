@@ -110,6 +110,9 @@ The same staples file drives two scripts, for when you'd rather type:
 ./scripts/kroger-weekly-cart          # add your usual to the cart
 ```
 
+Like the page, the script leaves out anything Kroger says is out of stock and
+lists what it skipped.
+
 `./kroger-pp-cli --help` lists every command, and there's an MCP server
 (`./cmd/kroger-pp-mcp`) and a Claude skill (`SKILL.md`) for using it from an AI
 agent. Problems signing in are covered in [AUTH-SETUP.md](AUTH-SETUP.md),
@@ -186,6 +189,18 @@ This CLI is designed for AI agent consumption:
 - **Agent-safe by default** - no colors or formatting unless `--human-friendly` is set
 
 Exit codes: `0` success, `2` usage error, `3` not found, `4` auth error, `5` API error, `7` rate limited, `10` config error.
+
+## Development
+
+```bash
+go test ./...                 # Go tests
+cd e2e && npm install && npx playwright install chromium
+npx playwright test           # the page, end to end
+```
+
+The end-to-end tests run the real page and server against `e2e/fakekroger`, a
+stand-in for kroger.com with a small fixed catalog, so they never touch a real
+account. The HTML report lands in `e2e/report/`.
 
 ## How it was made
 

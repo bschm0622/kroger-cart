@@ -163,8 +163,17 @@ main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
   border-bottom: 1px solid var(--border);
 }
 .item:last-child { border-bottom: none; }
+.list-divider {
+  padding: 10px 16px; font-size: 12px; font-weight: 500; color: var(--muted-foreground);
+  background: var(--muted); border-bottom: 1px solid var(--border);
+}
 .item .name { flex: 1; min-width: 0; }
-.item .name b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Up to two lines, so a phone shows more than the first few words; the full
+   name is in the tooltip. */
+.item .name b {
+  font-weight: 500; line-height: 1.35; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
 .item .meta { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
 .item.on { background: color-mix(in srgb, var(--muted) 55%, var(--card)); }
 .item.empty { justify-content: center; min-height: 96px; color: var(--muted-foreground); text-align: center; }

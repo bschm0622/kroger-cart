@@ -124,6 +124,9 @@ func do(t *testing.T, srv *Server, method, path, body string) *httptest.Response
 	// httptest.NewRequest's default RemoteAddr is 192.0.2.1, which localOnly
 	// correctly rejects; every real request arrives from loopback.
 	r.RemoteAddr = "127.0.0.1:54321"
+	// Its default Host, example.com, is refused too: real requests are
+	// addressed to the address the server listens on.
+	r.Host = "127.0.0.1:8787"
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, r)
 	return w
@@ -428,6 +431,7 @@ func TestCrossOriginRequestIsRefused(t *testing.T) {
 	for _, origin := range []string{"http://localhost:8787", "http://127.0.0.1:8787"} {
 		r := httptest.NewRequest("GET", "/api/cart", nil)
 		r.RemoteAddr = "127.0.0.1:5000"
+		r.Host = "127.0.0.1:8787"
 		r.Header.Set("Origin", origin)
 		w := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(w, r)

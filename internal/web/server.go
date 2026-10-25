@@ -134,6 +134,14 @@ func localOnly(next http.Handler) http.Handler {
 			http.Error(w, "cross-origin requests are not allowed", http.StatusForbidden)
 			return
 		}
+		// DNS rebinding: a site can point its own name at 127.0.0.1, after
+		// which the browser treats this server as that site and sends no
+		// Origin on reads. The Host header still carries the site's name,
+		// so anything not addressed to localhost is refused.
+		if !isLocalOrigin(r.Host) {
+			http.Error(w, "this server only answers to localhost", http.StatusForbidden)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
