@@ -26,6 +26,7 @@ async function openStaples(page: Page) {
 test('staples show price and picture, and what Kroger can’t sell sits under its own heading', async ({ page }) => {
   await openStaples(page);
   await expect(row(page, '#staples-list', 'Test Whole Milk').locator('img.thumb')).toBeVisible();
+  expect(await row(page, '#staples-list', 'Test Whole Milk').locator('.meta').innerText()).not.toMatch(/\d[A-Za-z]/);
 
   const divider = page.locator('#staples-list .list-divider');
   await expect(divider).toHaveText('Unavailable right now · 2');

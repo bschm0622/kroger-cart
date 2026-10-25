@@ -456,7 +456,7 @@ function itemRow(item, { meta, after } = {}) {
     image ? el('img', { className: 'thumb', src: image, alt: '', loading: 'lazy' }) : el('span', { className: 'thumb' }),
     el('span', { className: 'name' }, [
       el('b', { textContent: label, title: label }),
-      meta?.length ? el('span', { className: 'meta' }, meta) : null,
+      meta?.length ? el('span', { className: 'meta' }, meta.map((m) => (typeof m === 'string' ? el('span', { textContent: m }) : m))) : null,
     ]),
     qtyControl(item),
     after || null,
