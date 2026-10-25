@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Build a staples list from what you actually buy.
+#
+# Reads your Kroger purchase history, counts how often each UPC appears
+# across distinct trips, resolves product names in bulk, and writes a
+# tab-separated file you can hand-edit:
+#
+#     qty   upc             times   name
+#
+# Every line starts commented out. You uncomment the things you want on
+# the weekly order once, and from then on `kroger-weekly-cart` reads this
+# file. Re-running this script never clobbers your edits — it writes to a
+# .new file and tells you to diff, unless you pass --force.
+set -euo pipefail
+
+CLI="${KROGER_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kroger-pp-cli}"
+OUT="${KROGER_STAPLES:-$HOME/.config/kroger-pp-cli/staples.tsv}"
+TRIPS=100
+MIN_TIMES=2
+FORCE=0
+
+usage() {
+	cat <<'EOF'
+usage: kroger-staples [--trips N] [--min-times N] [--force] [--out PATH]
+
+  --trips N      how many past trips to read (default 100, the API max page)
+  --min-times N  only list items bought at least N times (default 2)
+  --force        overwrite the staples file instead of writing .new
+  --out PATH     staples file location (default ~/.config/kroger-pp-cli/staples.tsv)
+EOF
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--trips) TRIPS="$2"; shift 2 ;;
+	--min-times) MIN_TIMES="$2"; shift 2 ;;
+	--out) OUT="$2"; shift 2 ;;
+	--force) FORCE=1; shift ;;
+	-h | --help) usage; exit 0 ;;
+	*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+	esac
+done
+
+[ -x "$CLI" ] || { echo "kroger-pp-cli not found at $CLI (build it, or set KROGER_CLI)" >&2; exit 1; }
+mkdir -p "$(dirname "$OUT")"
+
+target="$OUT"
+if [ -e "$OUT" ] && [ "$FORCE" -eq 0 ]; then
+	target="$OUT.new"
+fi
+
+echo "Reading the last $TRIPS trips..." >&2
+history_json="$(mktemp)"
+trap 'rm -f "$history_json"' EXIT
+# --data-source live is not optional here. Under "auto" a network-level
+# failure (which is what a stale session looks like) falls back to the local
+# synced store, and the fallback is silent under --json. A staples list is
+# only meaningful if it came from your actual history, so fail instead.
+"$CLI" orders history --size "$TRIPS" --json --no-cache --data-source live >"$history_json"
+
+# Frequency count, then bulk name resolution. Names come from a second
+# call because purchase history returns bare UPCs and nothing else.
+upcs="$(python3 - "$history_json" "$MIN_TIMES" <<'PY'
+import json, sys
+from collections import Counter
+
+with open(sys.argv[1]) as fh:
+    trips = json.load(fh)["results"]["data"]["postOrderSearch"]["data"]
+# One trip counts once. Buying three bananas on one visit is not the same
+# signal as buying bananas on three separate visits, and it is the second
+# one that makes something a staple.
+counts = Counter()
+for t in trips:
+    counts.update({li["upc"] for li in t.get("lineItems") or [] if li.get("upc")})
+keep = [(n, u) for u, n in counts.items() if n >= int(sys.argv[2])]
+keep.sort(key=lambda p: (-p[0], p[1]))
+print("\n".join(f"{u}\t{n}" for n, u in keep))
+PY
+)"
+
+RANGE="$(python3 - "$history_json" <<'PY'
+import json, sys
+
+with open(sys.argv[1]) as fh:
+    trips = json.load(fh)["results"]["data"]["postOrderSearch"]["data"]
+dates = sorted(t["createdDateTime"]["value"][:10] for t in trips if t.get("createdDateTime"))
+print(f"{dates[0]} to {dates[-1]}" if dates else "no dated trips")
+PY
+)"
+
+count="$(printf '%s\n' "$upcs" | grep -c . || true)"
+[ "$count" -gt 0 ] || { echo "No item was bought $MIN_TIMES+ times in $TRIPS trips." >&2; exit 1; }
+echo "Resolving names for $count items..." >&2
+
+# Batched because the endpoint rejects an unbounded UPC list, and the
+# client rate-limits to 2 rps anyway.
+names="$(mktemp)"
+trap 'rm -f "$history_json" "$names"' EXIT
+batch=()
+flush() {
+	[ ${#batch[@]} -gt 0 ] || return 0
+	local joined
+	joined="$(
+		IFS=,
+		echo "${batch[*]}"
+	)"
+	# --verified=false, deliberately. The verified catalog omits real
+	# groceries — deli-counter and other weighed items are not in it — and
+	# treating a miss as final is what leaves bare barcodes in the list.
+	# The department comes back too, so non-groceries can be dropped below.
+	"$CLI" products get --gtin13s "$joined" --json --no-cache --verified=false |
+		python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["results"]["data"]["products"]:
+    it = p.get("item", {})
+    upc = it.get("upc")
+    desc = (it.get("description") or "").replace("\t", " ").strip()
+    dept = ((it.get("familyTree") or {}).get("department") or {}).get("code") or ""
+    if upc:
+        print(f"{upc}\t{desc}\t{dept}")
+' >>"$names"
+	batch=()
+}
+while IFS=$'\t' read -r upc _; do
+	batch+=("$upc")
+	[ ${#batch[@]} -lt 24 ] || flush
+done <<<"$upcs"
+flush
+
+{
+	echo "# Kroger staples — edit this file, then run: kroger-weekly-cart"
+	echo "#"
+	echo "# Uncomment a line to put it on the weekly order. The first column is"
+	echo "# quantity; change it freely. Columns are tab-separated:"
+	echo "#"
+	echo "#   qty<TAB>upc<TAB>times-bought<TAB>name"
+	echo "#"
+	echo "# Generated $(date '+%Y-%m-%d') from your last $TRIPS trips,"
+	echo "# $RANGE. If those dates look wrong, the list is not yours —"
+	echo "# re-run this script rather than editing around it."
+	echo ""
+	python3 - "$upcs" "$names" <<'PY'
+import sys
+
+# Departments whose "products" are transaction lines rather than things you
+# can put in a cart: the pickup fee that rides along on every pickup order,
+# and the gas pump. Left in, the fee outranks every actual grocery, because
+# it appears on more trips than anything you eat.
+NON_GROCERY = {"34": "in-store pickup fee", "58": "fuel"}
+
+counts = [ln.split("\t") for ln in sys.argv[1].splitlines() if ln.strip()]
+names, depts = {}, {}
+with open(sys.argv[2]) as fh:
+    for ln in fh:
+        parts = ln.rstrip("\n").split("\t")
+        if len(parts) >= 2:
+            names[parts[0]] = parts[1]
+            depts[parts[0]] = parts[2] if len(parts) > 2 else ""
+for upc, n in counts:
+    if depts.get(upc) in NON_GROCERY:
+        print(f"# skipped {upc} ({NON_GROCERY[depts[upc]]}, {n} trips)", file=sys.stderr)
+        continue
+    print(f"# 1\t{upc}\t{n}x\t{names.get(upc) or '(name unavailable)'}")
+PY
+} >"$target"
+
+echo "" >&2
+echo "Wrote $target" >&2
+if [ "$target" != "$OUT" ]; then
+	echo "Your existing $OUT was left alone. Compare with:" >&2
+	echo "    diff $OUT $target" >&2
+fi

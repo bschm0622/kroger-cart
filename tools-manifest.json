@@ -1,0 +1,22 @@
+{
+  "api_name": "kroger",
+  "base_url": "https://www.kroger.com",
+  "description": "Kroger grocery CLI — search products, read order history, and add staples to your cart using your logged-in session.",
+  "mcp_ready": "partial",
+  "http_transport": "browser-chrome-h2",
+  "auth": {
+    "type": "cookie",
+    "cookie_domain": ".kroger.com"
+  },
+  "required_headers": [
+    {
+      "name": "x-kroger-channel",
+      "value": "WEB"
+    },
+    {
+      "name": "x-modality-type",
+      "value": "PICKUP"
+    }
+  ],
+  "tools": []
+}

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Put this week's staples in your Kroger cart.
+#
+# Reads the uncommented lines of ~/.config/kroger-pp-cli/staples.tsv,
+# looks up your active cart, and PUTs every item in one request. Then
+# open kroger.com/cart, adjust, and check out.
+#
+# Adding an item you already have in the cart SETS the quantity rather
+# than incrementing it, so running this twice in a row is a no-op, not a
+# double order.
+set -euo pipefail
+
+CLI="${KROGER_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kroger-pp-cli}"
+STAPLES="${KROGER_STAPLES:-$HOME/.config/kroger-pp-cli/staples.tsv}"
+MODALITY="${KROGER_MODALITY:-PICKUP}"
+DRY=0
+CLEAR=0
+
+usage() {
+	cat <<'EOF'
+usage: kroger-weekly-cart [--dry-run] [--clear] [--file PATH] [--modality PICKUP|DELIVERY]
+
+  --dry-run   print what would be added and exit without touching the cart
+  --clear     empty the cart first, so the order is exactly the staples list
+  --file      staples file (default ~/.config/kroger-pp-cli/staples.tsv)
+  --modality  fulfillment type for the added lines (default PICKUP)
+EOF
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--dry-run | -n) DRY=1; shift ;;
+	--clear) CLEAR=1; shift ;;
+	--file) STAPLES="$2"; shift 2 ;;
+	--modality) MODALITY="$2"; shift 2 ;;
+	-h | --help) usage; exit 0 ;;
+	*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+	esac
+done
+
+[ -x "$CLI" ] || { echo "kroger-pp-cli not found at $CLI (build it, or set KROGER_CLI)" >&2; exit 1; }
+[ -r "$STAPLES" ] || { echo "no staples file at $STAPLES — run kroger-staples first" >&2; exit 1; }
+
+body="$(python3 - "$STAPLES" "$MODALITY" <<'PY'
+import json, sys
+
+items, labels = [], []
+with open(sys.argv[1]) as fh:
+    for lineno, raw in enumerate(fh, 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = raw.rstrip("\n").split("\t")
+        if len(parts) < 2:
+            sys.exit(f"{sys.argv[1]}:{lineno}: expected tab-separated 'qty<TAB>upc', got: {line}")
+        qty, upc = parts[0].strip(), parts[1].strip()
+        name = parts[3].strip() if len(parts) > 3 else ""
+        if not qty.isdigit() or int(qty) < 1:
+            sys.exit(f"{sys.argv[1]}:{lineno}: quantity must be a positive whole number, got {qty!r}")
+        items.append({
+            "gtin13": upc,
+            "substitutionPolicy": "SHOPPER_CHOICE",
+            "channel": "WEB",
+            "modalityType": sys.argv[2],
+            "quantity": int(qty),
+            "savedForLater": False,
+        })
+        labels.append(f"  {qty} x {name or upc}")
+
+if not items:
+    sys.exit("every line in the staples file is commented out — uncomment what you want, then re-run")
+print("\n".join(labels), file=sys.stderr)
+print(json.dumps({"lineItems": items}))
+PY
+)"
+
+if [ "$DRY" -eq 1 ]; then
+	echo "" >&2
+	echo "--dry-run: nothing was added." >&2
+	exit 0
+fi
+
+echo "" >&2
+echo "Finding your active cart..." >&2
+carts="$("$CLI" cart get --no-cache --json)"
+cart_id="$(printf '%s' "$carts" | python3 -c '
+import json, sys
+for c in json.load(sys.stdin)["results"]["data"]["carts"]:
+    if c.get("type") == "ACTIVE":
+        print(c["id"]); break
+')"
+[ -n "$cart_id" ] || { echo "no ACTIVE cart on this account; open kroger.com and add an item" >&2; exit 1; }
+
+if [ "$CLEAR" -eq 1 ]; then
+	# Removal is quantity 0 against the server-assigned line item id.
+	# Sending {"lineItems":[]} is rejected: the API requires at least one
+	# entry, so an empty cart has to be spelled out item by item.
+	clear_body="$(printf '%s' "$carts" | python3 -c '
+import json, sys
+for c in json.load(sys.stdin)["results"]["data"]["carts"]:
+    if c.get("type") != "ACTIVE":
+        continue
+    items = [{
+        "id": li["id"],
+        "gtin13": li["gtin13"],
+        "quantity": 0,
+        "modalityType": li.get("modalityType", "PICKUP"),
+        "channel": "WEB",
+        "substitutionPolicy": "SHOPPER_CHOICE",
+        "savedForLater": False,
+    } for li in (c.get("lineItems") or [])]
+    print(json.dumps({"lineItems": items}) if items else "")
+')"
+	if [ -n "$clear_body" ]; then
+		echo "Clearing the cart..." >&2
+		printf '%s' "$clear_body" | "$CLI" cart add "$cart_id" --stdin --json >/dev/null
+	else
+		echo "Cart is already empty." >&2
+	fi
+fi
+
+printf '%s' "$body" | "$CLI" cart add "$cart_id" --stdin --json >/dev/null
+echo "Added to cart $cart_id. Review and check out at https://www.kroger.com/cart" >&2

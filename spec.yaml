@@ -1,0 +1,225 @@
+name: kroger
+description: Kroger grocery CLI — search products, read order history, and add staples to your cart using your logged-in session.
+version: 0.1.0
+base_url: https://www.kroger.com
+spec_source: sniffed
+http_transport: browser-chrome-h2
+category: commerce
+auth:
+    type: cookie
+    cookie_domain: .kroger.com
+    env_vars: []
+required_headers:
+    - name: x-kroger-channel
+      value: 'WEB'
+    - name: x-modality-type
+      value: 'PICKUP'
+config:
+    format: toml
+    path: ~/.config/kroger-pp-cli/config.toml
+resources:
+    products:
+        description: Search and look up Kroger products
+        endpoints:
+            search:
+                method: GET
+                path: /atlas/v1/search/v1/products-search
+                description: Search products by keyword (returns items with UPC/gtin13, price, availability)
+                params:
+                    - name: filter.keyword
+                      flag_name: keyword
+                      type: string
+                      required: true
+                      positional: false
+                      default: null
+                      description: "Search term, e.g. 'milk'"
+                      fields: []
+                    - name: filter.fulfillmentMethods
+                      flag_name: fulfillment
+                      type: string
+                      required: false
+                      positional: false
+                      default: "PICKUP"
+                      description: "Fulfillment method: PICKUP or DELIVERY"
+                      fields: []
+                    - name: page.offset
+                      flag_name: offset
+                      type: int
+                      required: false
+                      positional: false
+                      default: 0
+                      description: "Result offset for pagination"
+                      fields: []
+                    - name: page.size
+                      flag_name: size
+                      aliases: ["limit"]
+                      type: int
+                      required: false
+                      positional: false
+                      default: 24
+                      description: "Number of results to return"
+                      fields: []
+                body: []
+                response:
+                    type: object
+                pagination: null
+            get:
+                method: GET
+                path: /atlas/v1/product/v2/products
+                description: Get product details for one or more gtin13s (comma-separated)
+                params:
+                    - name: filter.gtin13s
+                      flag_name: gtin13s
+                      type: string
+                      required: true
+                      positional: false
+                      default: null
+                      description: "Comma-separated 13-digit UPCs"
+                      fields: []
+                    - name: filter.verified
+                      flag_name: verified
+                      type: bool
+                      required: false
+                      positional: false
+                      default: true
+                      description: "Only verified products"
+                      fields: []
+                    - name: projections
+                      flag_name: projections
+                      type: string
+                      required: false
+                      positional: false
+                      default: "items.full,offers.compact,nutrition.label,inventory.projected"
+                      description: "Response projections"
+                      fields: []
+                body: []
+                response:
+                    type: object
+                pagination: null
+    cart:
+        description: Add items to your Kroger cart
+        endpoints:
+            add:
+                method: PUT
+                path: /atlas/v1/carts/{cart_id}
+                description: 'Add/update line items in your cart. Pipe the JSON body via --stdin (shape: {"lineItems":[{"gtin13":...,"quantity":N,"modalityType":"PICKUP",...}]}).'
+                params:
+                    - name: cart_id
+                      type: string
+                      required: true
+                      positional: true
+                      default: null
+                      description: "Your active cart UUID"
+                      fields: []
+                body:
+                    - name: lineItems
+                      type: array
+                      required: true
+                      positional: false
+                      default: null
+                      description: Cart line items (use --stdin)
+                      fields: []
+                response:
+                    type: object
+                pagination: null
+            savings:
+                method: POST
+                path: /atlas/v1/carts/v2/cart-savings
+                description: Compute savings for a set of line items. Pipe JSON body via --stdin.
+                params: []
+                body:
+                    - name: lineItems
+                      type: array
+                      required: true
+                      positional: false
+                      default: null
+                      description: Line items (use --stdin)
+                      fields: []
+                response:
+                    type: object
+                pagination: null
+    profile:
+        description: Your Kroger account profile (also an auth check)
+        endpoints:
+            get:
+                method: GET
+                path: /atlas/v1/customer-profile/v1/profile
+                description: Get your customer profile (use to verify the session is authenticated)
+                params:
+                    - name: projections
+                      flag_name: projections
+                      type: string
+                      required: false
+                      positional: false
+                      default: "customerProfile.full"
+                      description: "Profile projections"
+                      fields: []
+                body: []
+                response:
+                    type: object
+                pagination: null
+    orders:
+        description: Past purchases / order history
+        endpoints:
+            history:
+                method: GET
+                path: /atlas/v1/post-order/v1/purchase-history-search
+                description: List past purchase transactions (most recent first)
+                params:
+                    - name: pageNo
+                      flag_name: page
+                      type: int
+                      required: false
+                      positional: false
+                      default: 1
+                      description: "Page number"
+                      fields: []
+                    - name: pageSize
+                      flag_name: size
+                      aliases: ["limit"]
+                      type: int
+                      required: false
+                      positional: false
+                      default: 10
+                      description: "Transactions per page"
+                      fields: []
+                body: []
+                response:
+                    type: object
+                pagination: null
+            details:
+                method: POST
+                path: /atlas/v1/purchase-history/v2/details
+                description: 'Get line items for past transactions. Pipe a JSON array via --stdin: [{"divisionNumber":..,"storeNumber":..,"terminalNumber":..,"transactionDate":..,"transactionId":..}].'
+                params: []
+                body:
+                    - name: transactions
+                      type: array
+                      required: true
+                      positional: false
+                      default: null
+                      description: Transactions to expand (use --stdin)
+                      fields: []
+                response:
+                    type: object
+                pagination: null
+    usual:
+        description: 'Kroger "your usual items" recommendations'
+        endpoints:
+            products:
+                method: POST
+                path: /atlas/v1/recommendations/v1/dont-forget-usual-products
+                description: 'Get usual-product recommendations. Pipe JSON via --stdin: {"carts":[{"id":"<cart_id>","upcs":[..]}]}.'
+                params: []
+                body:
+                    - name: carts
+                      type: array
+                      required: true
+                      positional: false
+                      default: null
+                      description: Cart context (use --stdin)
+                      fields: []
+                response:
+                    type: object
+                pagination: null
+types: {}

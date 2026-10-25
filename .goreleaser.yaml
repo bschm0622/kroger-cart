@@ -1,0 +1,51 @@
+version: 2
+project_name: kroger-pp-cli
+changelog:
+  disable: true
+builds:
+  - id: kroger-pp-cli
+    main: ./cmd/kroger-pp-cli
+    binary: kroger-pp-cli
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/bschm0622/kroger-cart/internal/cli.version={{ .Version }}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+      - windows_arm64
+  - id: kroger-pp-mcp
+    main: ./cmd/kroger-pp-mcp
+    binary: kroger-pp-mcp
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+      - windows_arm64
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+brews:
+  - name: kroger-pp-cli
+    repository:
+      owner: 
+      name: homebrew-tap
+    homepage: "https://github.com//kroger-pp-cli"
+    description: "Kroger grocery CLI — search products, read order history, and add staples to your cart using your logged-in session."
+    install: |
+      bin.install "kroger-pp-cli"
+      bin.install "kroger-pp-mcp"

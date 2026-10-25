@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-21T03:52:16.88327Z",
+  "printing_press_version": "4.24.0",
+  "api_name": "kroger",
+  "display_name": "Kroger",
+  "cli_name": "kroger-pp-cli",
+  "creator": {
+    "name": "bschm0622"
+  },
+  "printer_name": "bschm0622",
+  "spec_path": "kroger.yaml",
+  "spec_format": "internal",
+  "spec_checksum": "sha256:b3c866e74b812853f3140b8bfcdaa531fec565db16daba1526a3a0afccd72cdc",
+  "run_id": "20260621-035216",
+  "category": "commerce",
+  "description": "Kroger grocery CLI — search products, read order history, and add staples to your cart using your logged-in session.",
+  "mcp_binary": "kroger-pp-mcp",
+  "mcp_tool_count": 8,
+  "mcp_ready": "partial",
+  "api_version": "0.1.0",
+  "auth_type": "cookie"
+}

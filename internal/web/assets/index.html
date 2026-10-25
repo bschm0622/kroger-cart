@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kroger cart</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">Kroger cart</span>
+    <nav id="tabs" class="tabs" aria-label="Sections">
+      <button data-tab="staples" class="active">Staples</button>
+      <button data-tab="search">Search</button>
+      <button data-tab="recipes">Recipes</button>
+      <button data-tab="history">Past trips</button>
+    </nav>
+    <a id="cart-link" class="btn outline sm" href="https://www.kroger.com/cart" target="_blank" rel="noreferrer">
+      <span>Check out on kroger.com</span>
+    </a>
+  </div>
+</header>
+
+<div id="banner" role="status" hidden></div>
+
+<main>
+  <section id="cookie-box" class="card notice" hidden>
+    <h2>Your Kroger session has expired</h2>
+    <p class="muted">If you're signed in to kroger.com in Chrome, this reads the session straight from it. macOS asks once for keychain permission.</p>
+    <div class="row">
+      <button id="cookie-chrome" class="btn primary">Import from Chrome</button>
+      <button id="cookie-cancel" class="btn ghost">Not now</button>
+    </div>
+    <details>
+      <summary>Not using Chrome? Paste the session by hand</summary>
+      <ol>
+        <li>On <a href="https://www.kroger.com" target="_blank" rel="noreferrer">kroger.com</a>, signed in, open DevTools (⌥⌘I) → <b>Network</b> → filter <code>atlas</code>.</li>
+        <li>Click a <code>customer-profile/v1/profile</code> request <b>whose Status reads 200</b>. A cookie from any other request signs you in but every call fails.</li>
+        <li><b>Headers → Request Headers</b> → right-click <code>Cookie:</code> → <b>Copy value</b>, and paste below.</li>
+      </ol>
+      <textarea id="cookie-input" rows="4" placeholder="_abck=…; bm_sz=…; …" spellcheck="false"></textarea>
+      <div class="row">
+        <button id="cookie-save" class="btn outline">Save pasted session</button>
+      </div>
+    </details>
+  </section>
+
+  <div class="layout">
+    <div class="content">
+      <!-- Staples -->
+      <section id="tab-staples" class="tab">
+        <div class="page-head">
+          <div>
+            <h1>Staples</h1>
+            <p class="muted">What you buy most, most-bought first.</p>
+          </div>
+          <input id="staples-filter" class="input" type="search" placeholder="Filter staples…" spellcheck="false">
+        </div>
+        <div id="staples-list" class="card list"></div>
+        <div class="page-foot">
+          <button id="staples-seed" class="btn ghost sm">Rebuild from purchase history</button>
+        </div>
+      </section>
+
+      <!-- Search -->
+      <section id="tab-search" class="tab" hidden>
+        <div class="page-head">
+          <div>
+            <h1>Search</h1>
+            <p class="muted">Find anything on kroger.com, including things you've never bought.</p>
+          </div>
+        </div>
+        <form id="find-form" class="search-row">
+          <input id="find-q" class="input" type="search" placeholder="Olive oil, sourdough…" spellcheck="false" autocomplete="off">
+          <button id="find-go" class="btn primary">Search</button>
+        </form>
+        <div id="find-list" class="card list"></div>
+      </section>
+
+      <!-- Recipes -->
+      <section id="tab-recipes" class="tab" hidden>
+        <div class="page-head">
+          <div>
+            <h1>Recipes</h1>
+            <p class="muted">Groups of items you buy together. Add one and every ingredient goes on your list.</p>
+          </div>
+          <button id="recipe-new" class="btn outline">New recipe</button>
+        </div>
+        <div id="recipes-list" class="card list"></div>
+      </section>
+
+      <!-- History -->
+      <section id="tab-history" class="tab" hidden>
+        <div class="page-head">
+          <div>
+            <h1>Past trips</h1>
+            <p class="muted">Open a trip to add anything you bought before.</p>
+          </div>
+          <input id="history-filter" class="input" type="search" placeholder="Find an item…" spellcheck="false">
+        </div>
+        <div id="history-list" class="card list"></div>
+        <div class="page-foot">
+          <button id="history-reload" class="btn ghost sm">Reload trips</button>
+        </div>
+      </section>
+    </div>
+
+    <aside id="basket" aria-label="Your Kroger cart">
+      <button id="basket-bar" type="button" class="basket-bar"></button>
+      <div class="card basket-panel">
+        <div class="basket-head">
+          <h2>Your Kroger cart</h2>
+          <span id="basket-count" class="badge"></span>
+          <span class="grow"></span>
+          <button id="basket-empty" type="button" class="btn ghost sm" hidden>Empty</button>
+          <button id="basket-close" type="button" class="btn ghost sm">Close</button>
+        </div>
+        <div id="basket-body"></div>
+        <div class="basket-foot">
+          <button id="basket-send" class="btn primary lg" hidden>Update Kroger cart</button>
+          <a id="basket-checkout" class="btn outline lg" href="https://www.kroger.com/cart" target="_blank" rel="noreferrer" hidden>Check out on kroger.com</a>
+          <button id="basket-discard" type="button" class="btn ghost sm" hidden>Discard changes</button>
+          <div class="basket-more">
+            <button id="basket-usual" type="button" class="btn ghost sm" hidden>Add your usual</button>
+            <button id="basket-to-usual" type="button" class="btn ghost sm" hidden>Save as usual</button>
+            <button id="basket-to-recipe" type="button" class="btn ghost sm" hidden>Save as recipe</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<!-- Recipe editor -->
+<dialog id="recipe-dialog">
+  <form id="recipe-form" method="dialog">
+    <h2 id="recipe-title">New recipe</h2>
+    <label class="field">Name <input id="recipe-name" class="input" required spellcheck="false"></label>
+    <label class="field">Notes <input id="recipe-notes" class="input" placeholder="Optional" spellcheck="false"></label>
+    <h3>Ingredients</h3>
+    <div id="recipe-ingredients" class="card list compact"></div>
+    <div class="search-row">
+      <input id="recipe-search" class="input" type="search" placeholder="Search products to add…" spellcheck="false">
+      <button type="button" id="recipe-search-go" class="btn outline">Search</button>
+    </div>
+    <div id="recipe-results" class="card list compact"></div>
+    <div class="dialog-foot">
+      <button type="button" id="recipe-delete" class="btn ghost danger">Delete recipe</button>
+      <span class="grow"></span>
+      <button type="button" id="recipe-cancel" class="btn outline">Cancel</button>
+      <button type="button" id="recipe-save" class="btn primary">Save recipe</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "manifest_version": "0.3",
+  "name": "kroger-pp-mcp",
+  "display_name": "Kroger",
+  "version": "0.0.0",
+  "description": "Kroger grocery CLI — search products, read order history, and add staples to your cart using your logged-in session.",
+  "author": {
+    "name": "CLI Printing Press"
+  },
+  "license": "Apache-2.0",
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/kroger-pp-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/bin/kroger-pp-mcp",
+      "args": []
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  }
+}

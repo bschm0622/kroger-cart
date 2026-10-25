@@ -1,0 +1,15 @@
+# Captured browser traffic holds live kroger.com session cookies. Never commit it.
+*.har
+.env
+.env.*
+!.env.example
+
+# Build output
+/kroger-pp-cli
+/kroger-pp-mcp
+/build/
+/dist/
+*.mcpb
+bin/
+
+.DS_Store
