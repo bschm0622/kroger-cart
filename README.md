@@ -14,6 +14,16 @@ usable on its own.
 > whenever Kroger changes its site, and automated access may be against
 > Kroger's terms of use. Use it on your own account, at your own risk.
 
+## Set up with an AI agent
+
+Open this folder in Claude Code, Codex, Cursor or any coding agent and say:
+
+> Set up Kroger Cart by following SETUP.md.
+
+It builds the app, signs you in from Chrome, saves your store, builds your
+staples list and opens the page, asking you for the few things only you can
+do.
+
 ## What the page does
 
 - **Staples:** everything you've bought on two or more trips, most-bought
@@ -41,21 +51,7 @@ cd kroger-cart
 go build -o kroger-pp-cli ./cmd/kroger-pp-cli
 ```
 
-**1. Tell it your store.** Product search needs to know which store you shop
-at. On kroger.com, open DevTools (⌥⌘I) → **Network**, filter `atlas`, click any
-request, and copy these request headers into
-`~/.config/kroger-pp-cli/config.toml`:
-
-```toml
-[headers]
-"x-laf-object" = "..."
-"x-modality" = "..."
-"x-geo-location-v1" = "..."
-```
-
-They describe the store, not you, so you only redo this if you switch stores.
-
-**2. Sign in.** With kroger.com open and signed in in Chrome:
+**1. Sign in.** With kroger.com open and signed in in Chrome:
 
 ```bash
 ./kroger-pp-cli auth from-chrome
@@ -65,6 +61,17 @@ They describe the store, not you, so you only redo this if you switch stores.
 This reads your Kroger session from Chrome's cookie store. macOS asks once for
 permission to use your keychain. Sessions last days, not months; when one
 expires, the page offers **Import from Chrome** itself.
+
+**2. Tell it your store.** Product search needs to know which store you shop
+at. On kroger.com, search for anything, then open DevTools (⌥⌘I) → **Network**,
+filter for `products-search`, and right-click that request → **Copy** → **Copy
+as cURL**. Then:
+
+```bash
+pbpaste | ./kroger-pp-cli auth set-store -
+```
+
+Only the store headers are kept. Redo this if you switch stores.
 
 **3. Open the page.**
 

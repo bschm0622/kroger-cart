@@ -1,5 +1,7 @@
 # Kroger Printed CLI Agent Guide
 
+**Setting this up for someone for the first time? Follow [SETUP.md](SETUP.md).**
+
 This directory is a generated `kroger-pp-cli` printed CLI. It was produced by [CLI Printing Press](https://github.com/mvanhorn/cli-printing-press), so treat systemic fixes as upstream Printing Press fixes first. Keep local edits narrow and document why a generated-tree patch belongs here.
 
 ## Local Operating Contract

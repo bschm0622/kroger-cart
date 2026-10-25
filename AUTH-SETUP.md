@@ -100,8 +100,12 @@ Details worth knowing:
 
 The cookies alone are enough for `customer-profile-profile` and `orders
 history`. Product search additionally needs the store-context headers, or it
-returns `400 LAF_OBJECTS_REQUIRED`. Add them to `~/.config/kroger-pp-cli/config.toml`,
-copied from any browser request's headers:
+returns `400 LAF_OBJECTS_REQUIRED`. The quick way: search on kroger.com, then in
+DevTools → Network right-click a `products-search` request → **Copy** → **Copy as
+cURL**, and run `pbpaste | ./kroger-pp-cli auth set-store -`.
+
+Or add them to `~/.config/kroger-pp-cli/config.toml` by hand, copied from that
+request's headers:
 
 ```toml
 [headers]
@@ -161,7 +165,7 @@ Akamai in the first place.
 | --- | --- | --- |
 | `401 AUTH_REQUIRED` | session expired | `kroger-pp-cli auth from-chrome`, or **Import from Chrome** on the page |
 | `403 FORBIDDEN_ACTION` | cookies copied from a request that wasn't itself a 200 | recopy from a request you watched return 200 |
-| `400 LAF_OBJECTS_REQUIRED` | store headers missing from `config.toml` | copy `x-laf-object`, `x-modality`, `x-geo-location-v1` from any `atlas` request |
+| `400 LAF_OBJECTS_REQUIRED` | store headers missing from `config.toml` | `auth set-store` (see Store context above) |
 | `429` / "Kroger is limiting requests" | Akamai rate limit | wait a minute |
 | `no ACTIVE cart` | account has no cart yet | add one item on kroger.com |
 | `orders details` fails | Akamai Bot Manager; unfixable from a CLI | use `orders history` |

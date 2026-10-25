@@ -36,6 +36,7 @@ func newAuthCmd(flags *rootFlags) *cobra.Command {
 	cmd.AddCommand(newAuthSetTokenCmd(flags))
 	cmd.AddCommand(newAuthSetCookieCmd(flags))
 	cmd.AddCommand(newAuthFromChromeCmd(flags))
+	cmd.AddCommand(newAuthSetStoreCmd(flags))
 	cmd.AddCommand(newAuthLogoutCmd(flags))
 
 	return cmd
