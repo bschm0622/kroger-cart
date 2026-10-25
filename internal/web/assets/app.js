@@ -253,7 +253,13 @@ const unavailableFor = (upc) => state.stock.get(upc)?.unavailable || '';
 // Pictures by UPC, from any product lookup, so staples and past trips can
 // show them too.
 state.images = new Map();
-const noteImages = (items) => { for (const it of items) if (it?.upc && it.image) state.images.set(it.upc, it.image); };
+state.prices = new Map();
+const noteImages = (items) => {
+  for (const it of items) {
+    if (it?.upc && it.image) state.images.set(it.upc, it.image);
+    if (it?.upc && it.price) state.prices.set(it.upc, it.price);
+  }
+};
 
 // lookUp asks Kroger about UPCs the page knows nothing about yet (staples are
 // a local file). It's quiet and best-effort: a failure just leaves them unknown.
@@ -643,8 +649,9 @@ function renderStaples() {
     };
     list.append(itemRow(s, {
       meta: [
-        s.times ? `Bought ${s.times} times` : 'Added by you',
+        [state.prices.get(s.upc), s.times ? `Bought ${s.times} times` : 'Added by you'].filter(Boolean).join(' · '),
         s.selected ? el('span', { className: 'badge', textContent: 'Usual', title: 'Part of “Add your usual”' }) : null,
+        stockBadge(s.upc),
       ].filter(Boolean),
       after: forget,
     }));
@@ -835,7 +842,8 @@ async function loadHistory() {
   if (!out) return;
   state.trips = out.trips || [];
   state.tripNames = out.names || {};
-  noteImages(Object.entries(out.images || {}).map(([upc, image]) => ({ upc, image })));
+  noteImages(Object.entries(out.images || {}).map(([upc, image]) => ({ upc, image, price: (out.prices || {})[upc] })));
+  noteImages(Object.entries(out.prices || {}).map(([upc, price]) => ({ upc, price })));
   // Every name the lookup resolved is known-available unless listed here.
   noteStock(Object.keys(state.tripNames).map((upc) => ({ upc, unavailable: (out.unavailable || {})[upc] || '' })));
   renderHistory();
@@ -889,7 +897,7 @@ function renderHistory() {
     // nobody looks at.
     const fill = () => {
       if (items.childElementCount) return;
-      for (const upc of shown) items.append(itemRow(toItem(upc), { meta: [stockBadge(upc)].filter(Boolean) }));
+      for (const upc of shown) items.append(itemRow(toItem(upc), { meta: [state.prices.get(upc), stockBadge(upc)].filter(Boolean) }));
     };
 
     const where = t.type === 'IN_STORE' ? 'In store' : (t.type || '').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());

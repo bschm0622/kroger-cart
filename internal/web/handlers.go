@@ -650,6 +650,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	flat := make(map[string]string, len(names))
 	unavailable := map[string]string{}
 	images := map[string]string{}
+	prices := map[string]string{}
 	for u, it := range names {
 		flat[u] = it.Name
 		if it.Unavailable != "" {
@@ -658,6 +659,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		if it.Image != "" {
 			images[u] = it.Image
 		}
+		if it.Price != "" {
+			prices[u] = it.Price
+		}
 	}
-	writeJSON(w, map[string]any{"trips": trips, "names": flat, "unavailable": unavailable, "images": images})
+	writeJSON(w, map[string]any{"trips": trips, "names": flat, "unavailable": unavailable, "images": images, "prices": prices})
 }
