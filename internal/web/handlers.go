@@ -276,6 +276,43 @@ func (s *Server) handleCartUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		want[it.UPC] = it.Quantity
 	}
+	// Nothing goes into the cart that Kroger says it can't sell. Only adds
+	// and increases are checked: lowering or removing an out-of-stock item
+	// already in the cart is always allowed. If the lookup itself fails the
+	// update goes ahead unchecked rather than blocking the whole cart.
+	have := func(upc string) int {
+		n := 0
+		for _, l := range existing[upc] {
+			n += l.Quantity
+		}
+		return n
+	}
+	var raised []string
+	for _, upc := range order {
+		if want[upc] > have(upc) {
+			raised = append(raised, upc)
+		}
+	}
+	type skip struct {
+		UPC    string `json:"upc"`
+		Name   string `json:"name"`
+		Reason string `json:"reason"`
+	}
+	var skipped []skip
+	if len(raised) > 0 {
+		if details, err := a.Products(r.Context(), raised); err == nil {
+			kept := order[:0]
+			for _, upc := range order {
+				if d, ok := details[upc]; ok && d.Unavailable != "" && want[upc] > have(upc) {
+					skipped = append(skipped, skip{UPC: upc, Name: d.Name, Reason: d.Unavailable})
+					continue
+				}
+				kept = append(kept, upc)
+			}
+			order = kept
+		}
+	}
+
 	var edits []lineEdit
 	var adds []wantLine
 	for _, upc := range order {
@@ -306,7 +343,38 @@ func (s *Server) handleCartUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"changed": len(order)})
+	if skipped == nil {
+		skipped = []skip{}
+	}
+	writeJSON(w, map[string]any{"changed": len(order), "skipped": skipped})
+}
+
+// handleProducts looks up details — name, picture, price, availability — for
+// UPCs the page already has, such as the staples list, which is a local file
+// and knows none of that.
+func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UPCs []string `json:"upcs"`
+	}
+	if err := decode(r, &body); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if len(body.UPCs) > 500 {
+		badRequest(w, fmt.Errorf("too many products at once (%d, max 500)", len(body.UPCs)))
+		return
+	}
+	a, err := s.api()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	items, err := a.Products(r.Context(), body.UPCs)
+	if err != nil && len(items) == 0 {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"items": items})
 }
 
 func (s *Server) handleCartClear(w http.ResponseWriter, r *http.Request) {
@@ -581,11 +649,15 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	flat := make(map[string]string, len(names))
 	unavailable := map[string]string{}
+	images := map[string]string{}
 	for u, it := range names {
 		flat[u] = it.Name
 		if it.Unavailable != "" {
 			unavailable[u] = it.Unavailable
 		}
+		if it.Image != "" {
+			images[u] = it.Image
+		}
 	}
-	writeJSON(w, map[string]any{"trips": trips, "names": flat, "unavailable": unavailable})
+	writeJSON(w, map[string]any{"trips": trips, "names": flat, "unavailable": unavailable, "images": images})
 }

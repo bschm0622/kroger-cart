@@ -84,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/recipes/delete", s.handleRecipeDelete)
 
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("POST /api/products", s.handleProducts)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 
 	return localOnly(mux)

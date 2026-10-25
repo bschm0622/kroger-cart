@@ -69,8 +69,10 @@ function banner(msg, kind, action) {
 // session — so every caller doesn't have to handle it. The server flags it with
 // needsCookie, and the session box opens itself.
 async function api(path, opts = {}) {
-  busyDepth++;
-  if (busyDepth === 1) banner('Working…', 'busy');
+  // Background lookups (opts.quiet) don't flash "Working…" over what you're doing.
+  const quiet = opts.quiet;
+  delete opts.quiet;
+  if (!quiet && ++busyDepth === 1) banner('Working…', 'busy');
   try {
     const res = await fetch(path, {
       ...opts,
@@ -86,7 +88,7 @@ async function api(path, opts = {}) {
     return data;
   } finally {
     // Only clear our own "Working…"; a message set meanwhile should stay.
-    if (--busyDepth === 0 && $('#banner').className === 'busy') banner('');
+    if (!quiet && --busyDepth === 0 && $('#banner').className === 'busy') banner('');
   }
 }
 
@@ -247,6 +249,39 @@ function noteStock(items) {
   }
 }
 const unavailableFor = (upc) => state.stock.get(upc)?.unavailable || '';
+
+// Pictures by UPC, from any product lookup, so staples and past trips can
+// show them too.
+state.images = new Map();
+const noteImages = (items) => { for (const it of items) if (it?.upc && it.image) state.images.set(it.upc, it.image); };
+
+// lookUp asks Kroger about UPCs the page knows nothing about yet (staples are
+// a local file). It's quiet and best-effort: a failure just leaves them unknown.
+async function lookUp(upcs) {
+  const todo = [...new Set(upcs)];
+  if (!todo.length) return {};
+  try {
+    const out = await api('/api/products', { method: 'POST', body: JSON.stringify({ upcs: todo }), quiet: true });
+    const items = Object.values(out.items || {});
+    noteImages(items);
+    // Anything looked up and not marked unavailable is known to be fine.
+    noteStock(todo.map((upc) => (out.items || {})[upc] || { upc, unavailable: '' }));
+    return out.items || {};
+  } catch {
+    return {};
+  }
+}
+
+// addChecked is addMany for batches (a recipe, a trip, your usual): it checks
+// stock first and leaves out whatever Kroger can't sell, saying which.
+async function addChecked(items, what) {
+  await lookUp(items.filter((it) => !state.stock.has(it.upc)).map((it) => it.upc));
+  const out = items.filter((it) => unavailableFor(it.upc) && qtyOnList(it.upc) < (it.qty || 1));
+  const n = addMany(items.filter((it) => !out.includes(it)));
+  const skipped = out.length ? ` Left out ${plural(out.length, 'item')} Kroger has out of stock: ${out.map((it) => it.name || nameFor(it.upc)).join(', ')}.` : '';
+  banner(n ? `Added ${plural(n, 'change')} from ${what}. Update the Kroger cart to send them.${skipped}`
+    : `Nothing new to add from ${what}.${skipped}`, out.length ? 'warn' : 'ok');
+}
 function stockBadge(upc) {
   const s = state.stock.get(upc);
   if (s?.unavailable) return el('span', { className: 'badge danger', textContent: s.unavailable });
@@ -368,6 +403,8 @@ function fillControl(slot, keepFocus) {
   // Kroger caps some items per order; going past it would just be refused.
   const max = state.stock.get(item.upc)?.maxQty;
   if (max && qty >= max) { plus.disabled = true; plus.title = `Kroger limits this to ${max} per order`; }
+  // Out of stock: you can lower or remove it, never raise it.
+  if (unavailableFor(item.upc) && qty >= inCart(item.upc)) { plus.disabled = true; plus.title = unavailableFor(item.upc); }
   slot.append(el('span', { className: 'stepper' }, [
     minus, el('output', { textContent: String(qty), ariaLabel: 'Quantity' }), plus,
   ]));
@@ -390,7 +427,7 @@ function refreshControls(upc) {
 function itemRow(item, { title, meta, thumb, after } = {}) {
   const label = title || item.name || item.upc;
   const row = el('div', { className: `item${qtyOnList(item.upc) ? ' on' : ''}` }, [
-    thumb ? el('img', { className: 'thumb', src: thumb, alt: '', loading: 'lazy' }) : null,
+    (thumb || state.images.get(item.upc)) ? el('img', { className: 'thumb', src: thumb || state.images.get(item.upc), alt: '', loading: 'lazy' }) : el('span', { className: 'thumb' }),
     el('span', { className: 'name' }, [
       el('b', { textContent: label, title: `${label}\nUPC ${item.upc}` }),
       meta ? el('span', { className: 'meta' }, meta) : null,
@@ -483,8 +520,7 @@ function renderBasket() {
 }
 
 function addUsual() {
-  const n = addMany(usual().map((s) => ({ upc: s.upc, name: s.name, qty: s.qty })));
-  banner(n ? `Your usual adds ${plural(n, 'change')}. Update the cart to send them.` : 'Your cart already has your usual.', 'ok');
+  return addChecked(usual().map((s) => ({ upc: s.upc, name: s.name, qty: s.qty })), 'your usual');
 }
 $('#basket-usual').onclick = addUsual;
 
@@ -519,12 +555,21 @@ $('#basket-empty').onclick = () => {
 $('#basket-send').onclick = () => run(async () => {
   const items = changes().map((d) => ({ upc: d.upc, qty: d.qty }));
   if (!items.length) return;
-  await post('/api/cart/update', { items });
+  const out = await post('/api/cart/update', { items });
+  // The server re-checks stock and refuses to add what Kroger can't sell.
+  // Those changes are dropped here too, so they don't sit pending forever.
+  const skipped = out.skipped || [];
+  noteStock(skipped.map((x) => ({ upc: x.upc, unavailable: x.reason })));
+  for (const x of skipped) state.draft.delete(x.upc);
+  saveDraft();
   // Re-read the cart rather than assuming: it's the truth, and edits that now
   // match it drop out on their own.
   await refreshCart();
   $('#basket').classList.remove('open');
-  banner(`Kroger cart updated: ${plural(items.length, 'change')}.`, 'ok');
+  const sent = items.length - skipped.length;
+  banner(skipped.length
+    ? `Kroger cart updated: ${plural(sent, 'change')}. Not added, out of stock: ${skipped.map((x) => x.name || nameFor(x.upc)).join(', ')}.`
+    : `Kroger cart updated: ${plural(sent, 'change')}.`, skipped.length ? 'warn' : 'ok');
 });
 
 $('#basket-to-recipe').onclick = () => {
@@ -562,6 +607,9 @@ async function loadStaples() {
   state.staples = out.staples || [];
   renderStaples();
   renderBasket();
+  // Pictures and stock for the staples list, fetched behind the page: it's a
+  // local file and knows neither. The list is usable before this lands.
+  lookUp(state.staples.map((s) => s.upc)).then(() => { renderStaples(); renderBasket(); });
 }
 
 // saveStaples persists the whole list on every change. The file is small and
@@ -671,10 +719,7 @@ function renderRecipes() {
     edit.onclick = () => openRecipe(r);
     const add = el('button', { type: 'button', className: 'btn outline sm' }, [icon('plus'), 'Add to list']);
     add.disabled = !ing.length;
-    add.onclick = () => {
-      const n = addMany(ing.map((i) => ({ upc: i.upc, name: i.name, qty: i.qty || 1 })));
-      banner(n ? `Added ${plural(n, 'ingredient')} from ${r.name} to your list.` : `Everything in ${r.name} is already on your list.`, 'ok');
-    };
+    add.onclick = () => addChecked(ing.map((i) => ({ upc: i.upc, name: i.name, qty: i.qty || 1 })), r.name);
     list.append(el('div', { className: 'item' }, [
       el('span', { className: 'name' }, [
         el('b', { textContent: r.name }),
@@ -790,6 +835,7 @@ async function loadHistory() {
   if (!out) return;
   state.trips = out.trips || [];
   state.tripNames = out.names || {};
+  noteImages(Object.entries(out.images || {}).map(([upc, image]) => ({ upc, image })));
   // Every name the lookup resolved is known-available unless listed here.
   noteStock(Object.keys(state.tripNames).map((upc) => ({ upc, unavailable: (out.unavailable || {})[upc] || '' })));
   renderHistory();
@@ -856,10 +902,7 @@ function renderHistory() {
       t.total ? el('span', { className: 'trip-total', textContent: `$${t.total}` }) : null,
     ]);
     const addAll = el('button', { type: 'button', className: 'btn outline sm' }, [icon('plus'), 'Add all']);
-    addAll.onclick = () => {
-      const n = addMany(shown.map(toItem));
-      banner(n ? `Added ${plural(n, 'item')} from ${tripDate(t.date)} to your list.` : 'Everything from that trip is already on your list.', 'ok');
-    };
+    addAll.onclick = () => addChecked(shown.map(toItem), tripDate(t.date));
 
     const row = el('div', { className: 'item trip' }, [head, addAll]);
     const setOpen = (open) => {
