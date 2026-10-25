@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="$ROOT/e2e/.tmp"
+[ -d "$DIR" ] && chmod -R u+w "$DIR"
 rm -rf "$DIR"
 mkdir -p "$DIR"
 
@@ -14,6 +15,7 @@ access_token = "bm_sz=test; _abck=test"
 
 [headers]
 x-modality = '{"type":"PICKUP","locationId":"00000"}'
+x-laf-object = '[{"modality":{"type":"PICKUP","handoffAddress":{"address":{"name":"Test Kroger"}}}}]'
 EOF
 
 # Milk is "your usual"; the rest are staples. 104 is one Kroger no longer has.
@@ -27,4 +29,5 @@ printf '%s\n' \
 
 cd "$ROOT"
 go build -o "$DIR/kroger-pp-cli" ./cmd/kroger-pp-cli
-exec "$DIR/kroger-pp-cli" serve --config "$DIR/config.toml" --addr 127.0.0.1:18787 --no-open
+mkdir -p "$DIR/home"
+HOME="$DIR/home" exec "$DIR/kroger-pp-cli" serve --config "$DIR/config.toml" --addr 127.0.0.1:18787 --no-open

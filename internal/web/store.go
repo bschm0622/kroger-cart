@@ -119,8 +119,11 @@ func parseStapleLine(line string) (Staple, bool, error) {
 		return Staple{}, false, fmt.Errorf("expected tab-separated 'qty<TAB>upc', got %q", trimmed)
 	}
 	qty, err := strconv.Atoi(strings.TrimSpace(cols[0]))
-	if err != nil || qty < 1 {
-		return Staple{}, false, fmt.Errorf("quantity must be a positive whole number, got %q", cols[0])
+	if err != nil || qty < 0 {
+		return Staple{}, false, fmt.Errorf("quantity must be a whole number, got %q", cols[0])
+	}
+	if qty == 0 {
+		qty, selected = 1, false
 	}
 	s := Staple{UPC: strings.TrimSpace(cols[1]), Quantity: qty, Selected: selected}
 	if len(cols) > 2 {
@@ -205,14 +208,21 @@ func SaveRecipe(dir string, r Recipe) (Recipe, error) {
 	if strings.TrimSpace(r.Name) == "" {
 		return r, fmt.Errorf("a recipe needs a name")
 	}
-	if r.Slug == "" {
-		r.Slug = slugify(r.Name)
-	}
-	if r.Slug == "" {
-		return r, fmt.Errorf("recipe name %q has no characters usable in a filename", r.Name)
+	if r.Slug != "" && r.Slug != slugify(r.Slug) {
+		return r, fmt.Errorf("invalid recipe id %q", r.Slug)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return r, err
+	}
+	if r.Slug == "" {
+		base := slugify(r.Name)
+		if base == "" {
+			return r, fmt.Errorf("recipe name %q has no characters usable in a filename", r.Name)
+		}
+		r.Slug = base
+		for n := 2; fileExists(filepath.Join(dir, r.Slug+".toml")); n++ {
+			r.Slug = fmt.Sprintf("%s-%d", base, n)
+		}
 	}
 	for i := range r.Ingredients {
 		if r.Ingredients[i].Quantity < 1 {
@@ -224,6 +234,11 @@ func SaveRecipe(dir string, r Recipe) (Recipe, error) {
 		return r, err
 	}
 	return r, writeFileAtomic(filepath.Join(dir, r.Slug+".toml"), raw)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func DeleteRecipe(dir, slug string) error {

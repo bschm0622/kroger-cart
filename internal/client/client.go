@@ -50,8 +50,32 @@ type Client struct {
 	HTTPClient *http.Client
 	DryRun     bool
 	NoCache    bool
-	cacheDir   string
-	limiter    *cliutil.AdaptiveLimiter
+	// NoRetryOn429 returns a rate-limit answer straight away instead of
+	// sleeping and retrying. The web UI sets it: a page waiting 15 seconds
+	// behind "Working…" is worse than saying "Kroger is limiting requests".
+	NoRetryOn429 bool
+	cacheDir     string
+	limiter      *cliutil.AdaptiveLimiter
+}
+
+// Limiter and ShareLimiter let a long-running caller (the web UI) pace every
+// request through one limiter, rather than giving each request a fresh one
+// that knows nothing about the others.
+func (c *Client) Limiter() *cliutil.AdaptiveLimiter       { return c.limiter }
+func (c *Client) ShareLimiter(l *cliutil.AdaptiveLimiter) { c.limiter = l }
+
+// ModalityType is how this person shops — PICKUP, DELIVERY, … — from the
+// x-modality store header that `auth set-store` saves, defaulting to PICKUP.
+func ModalityType(cfg *config.Config) string {
+	if cfg != nil {
+		var m struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(cfg.Headers["x-modality"]), &m) == nil && m.Type != "" {
+			return m.Type
+		}
+	}
+	return "PICKUP"
 }
 
 // RequestBaseURL returns the base URL used for requests.
@@ -652,7 +676,7 @@ func (c *Client) doInternal(ctx context.Context, method, path string, params map
 			req.Header.Set("Authorization", authHeader)
 		}
 		req.Header.Set("x-kroger-channel", "WEB")
-		req.Header.Set("x-modality-type", "PICKUP")
+		req.Header.Set("x-modality-type", ModalityType(c.Config))
 		if c.Config != nil {
 			for k, v := range c.Config.Headers {
 				req.Header.Set(k, v)
@@ -714,7 +738,7 @@ func (c *Client) doInternal(ctx context.Context, method, path string, params map
 		}
 
 		// Rate limited - adjust adaptive limiter and retry
-		if resp.StatusCode == 429 && attempt < maxRetries {
+		if resp.StatusCode == 429 && attempt < maxRetries && !c.NoRetryOn429 {
 			c.limiter.OnRateLimit()
 			wait := cliutil.RetryAfter(resp)
 			fmt.Fprintf(os.Stderr, "rate limited, waiting %s (attempt %d/%d, rate adjusted to %.1f req/s)\n", wait, attempt+1, maxRetries, c.limiter.Rate())

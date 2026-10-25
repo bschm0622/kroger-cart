@@ -127,6 +127,9 @@ func do(t *testing.T, srv *Server, method, path, body string) *httptest.Response
 	// Its default Host, example.com, is refused too: real requests are
 	// addressed to the address the server listens on.
 	r.Host = "127.0.0.1:8787"
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, r)
 	return w
@@ -165,98 +168,49 @@ func TestCartGetPicksActiveCartAndResolvesNames(t *testing.T) {
 	}
 }
 
-// Adding must send a quantity per UPC with no line item id, and must merge a
-// UPC requested twice — two recipes both wanting onions is the normal case.
-func TestCartAddMergesDuplicatesAndOmitsLineID(t *testing.T) {
+// A product new to the cart is added without a line id (Kroger rejects one on a
+// fresh add); one already there is edited through its line id.
+func TestCartUpdateAddsNewAndEditsExistingByLineID(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
 
-	w := do(t, srv, "POST", "/api/cart/add", `{"items":[
-		{"upc":"0001111062960","qty":1},
-		{"upc":"0001111041660","qty":1},
-		{"upc":"0001111062960","qty":3}]}`)
+	w := do(t, srv, "POST", "/api/cart/update", `{"items":[
+		{"upc":"0001111041660","qty":2},
+		{"upc":"0000000004011","qty":0}]}`)
 	if w.Code != 200 {
 		t.Fatalf("got %d: %s", w.Code, w.Body.String())
 	}
-	if len(fake.puts) != 1 {
-		t.Fatalf("got %d cart writes, want 1", len(fake.puts))
-	}
-	items := fake.puts[0]["lineItems"].([]any)
-	if len(items) != 2 {
-		t.Fatalf("got %d line items, want 2 after merging: %v", len(items), items)
-	}
-	byUPC := map[string]map[string]any{}
-	for _, it := range items {
-		m := it.(map[string]any)
-		byUPC[m["gtin13"].(string)] = m
-	}
-	if q := byUPC["0001111062960"]["quantity"]; q != float64(3) {
-		t.Errorf("merged quantity is %v, want the larger value 3", q)
-	}
-	for upc, m := range byUPC {
-		if _, hasID := m["id"]; hasID {
-			t.Errorf("%s carries an id; a fresh add must omit it", upc)
-		}
-		if m["modalityType"] != "PICKUP" || m["channel"] != "WEB" || m["substitutionPolicy"] != "SHOPPER_CHOICE" {
-			t.Errorf("%s is missing required fields: %v", upc, m)
+	var edit, add map[string]any
+	for _, put := range fake.puts {
+		for _, it := range put["lineItems"].([]any) {
+			m := it.(map[string]any)
+			switch m["gtin13"] {
+			case "0000000004011":
+				edit = m
+			case "0001111041660":
+				add = m
+			}
 		}
 	}
-}
-
-// Clearing is quantity 0 against each server-assigned id. An empty lineItems
-// array is rejected by the real API with "must contain at least 1 items", so
-// the removal has to be spelled out line by line.
-func TestCartClearUsesZeroQuantityWithLineIDs(t *testing.T) {
-	fake := newFakeKroger(t)
-	srv, _ := newTestServer(t, fake)
-
-	if w := do(t, srv, "POST", "/api/cart/clear", ""); w.Code != 200 {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	if edit == nil || edit["id"] != "line-1" || edit["quantity"] != float64(0) {
+		t.Errorf("removal went out as %v; want quantity 0 on line-1", edit)
 	}
-	if len(fake.puts) != 1 {
-		t.Fatalf("got %d cart writes, want 1", len(fake.puts))
+	if add == nil || add["quantity"] != float64(2) {
+		t.Fatalf("add went out as %v; want quantity 2", add)
 	}
-	items := fake.puts[0]["lineItems"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("got %d items, want 1", len(items))
+	if _, hasID := add["id"]; hasID {
+		t.Errorf("a fresh add carries an id: %v", add)
 	}
-	m := items[0].(map[string]any)
-	if m["quantity"] != float64(0) || m["id"] != "line-1" {
-		t.Errorf("clear sent %v; want quantity 0 with id line-1", m)
+	if add["modalityType"] != "PICKUP" || add["channel"] != "WEB" || add["substitutionPolicy"] != "SHOPPER_CHOICE" {
+		t.Errorf("add is missing required fields: %v", add)
 	}
 }
 
-// "Empty cart first" must clear before adding, not after — the other order
-// would delete the week's order it just placed.
-func TestCartAddWithClearClearsFirst(t *testing.T) {
+func TestCartUpdateRejectsNoChanges(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
-
-	w := do(t, srv, "POST", "/api/cart/add", `{"items":[{"upc":"0001111041660","qty":1}],"clear":true}`)
-	if w.Code != 200 {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-	if len(fake.puts) != 2 {
-		t.Fatalf("got %d cart writes, want 2 (clear then add)", len(fake.puts))
-	}
-	first := fake.puts[0]["lineItems"].([]any)[0].(map[string]any)
-	if first["quantity"] != float64(0) {
-		t.Errorf("first write was not the clear: %v", first)
-	}
-	second := fake.puts[1]["lineItems"].([]any)[0].(map[string]any)
-	if second["quantity"] != float64(1) || second["gtin13"] != "0001111041660" {
-		t.Errorf("second write was not the add: %v", second)
-	}
-}
-
-func TestCartAddRejectsEmptySelection(t *testing.T) {
-	fake := newFakeKroger(t)
-	srv, _ := newTestServer(t, fake)
-	if w := do(t, srv, "POST", "/api/cart/add", `{"items":[]}`); w.Code != 400 {
-		t.Fatalf("got %d, want 400: %s", w.Code, w.Body.String())
-	}
-	if len(fake.puts) != 0 {
-		t.Fatal("an empty selection reached the cart")
+	if w := do(t, srv, "POST", "/api/cart/update", `{"items":[]}`); w.Code != 400 {
+		t.Fatalf("got %d, want 400", w.Code)
 	}
 }
 
@@ -313,9 +267,9 @@ func TestHistoryResolvesNamesInOneBulkCall(t *testing.T) {
 	if len(out["trips"].([]any)) != 2 {
 		t.Fatalf("got %v trips", out["trips"])
 	}
-	names := out["names"].(map[string]any)
-	if names["0000000004011"] != "Bananas" {
-		t.Errorf("names came back as %v", names)
+	items := out["items"].(map[string]any)
+	if b, _ := items["0000000004011"].(map[string]any); b == nil || b["name"] != "Bananas" {
+		t.Errorf("items came back as %v", items)
 	}
 	// The same UPC appears three times across the two trips; resolving per
 	// trip would multiply a rate-limited call needlessly. One verified call
@@ -418,26 +372,23 @@ func TestCrossOriginRequestIsRefused(t *testing.T) {
 	fake := newFakeKroger(t)
 	srv, _ := newTestServer(t, fake)
 
-	for _, origin := range []string{"https://evil.example", "http://kroger.com"} {
-		r := httptest.NewRequest("POST", "/api/cart/clear", nil)
-		r.RemoteAddr = "127.0.0.1:5000"
-		r.Header.Set("Origin", origin)
-		w := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(w, r)
-		if w.Code != http.StatusForbidden {
-			t.Errorf("origin %s got %d, want 403", origin, w.Code)
-		}
-	}
-	for _, origin := range []string{"http://localhost:8787", "http://127.0.0.1:8787"} {
-		r := httptest.NewRequest("GET", "/api/cart", nil)
+	send := func(origin string) int {
+		r := httptest.NewRequest("POST", "/api/cart/update", strings.NewReader(`{"items":[{"upc":"0000000004011","qty":0}]}`))
 		r.RemoteAddr = "127.0.0.1:5000"
 		r.Host = "127.0.0.1:8787"
+		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", origin)
 		w := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(w, r)
-		if w.Code == http.StatusForbidden {
-			t.Errorf("origin %s was refused", origin)
+		return w.Code
+	}
+	for _, origin := range []string{"https://evil.example", "http://kroger.com", "http://localhost:3000", "http://127.0.0.1:9999"} {
+		if code := send(origin); code != http.StatusForbidden {
+			t.Errorf("origin %s got %d, want 403", origin, code)
 		}
+	}
+	if code := send("http://127.0.0.1:8787"); code == http.StatusForbidden {
+		t.Errorf("the page's own origin was refused")
 	}
 }
 

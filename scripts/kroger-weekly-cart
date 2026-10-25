@@ -12,7 +12,7 @@ set -euo pipefail
 
 CLI="${KROGER_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/kroger-pp-cli}"
 STAPLES="${KROGER_STAPLES:-$HOME/.config/kroger-pp-cli/staples.tsv}"
-MODALITY="${KROGER_MODALITY:-PICKUP}"
+MODALITY="${KROGER_MODALITY:-}"
 DRY=0
 CLEAR=0
 
@@ -41,6 +41,27 @@ while [ $# -gt 0 ]; do
 done
 
 [ -x "$CLI" ] || { echo "kroger-pp-cli not found at $CLI (build it, or set KROGER_CLI)" >&2; exit 1; }
+
+if [ -z "$MODALITY" ]; then
+	MODALITY="$(python3 - "${KROGER_CONFIG:-$HOME/.config/kroger-pp-cli/config.toml}" <<'PY'
+import json, re, sys
+try:
+    text = open(sys.argv[1]).read()
+except OSError:
+    text = ""
+m = re.search(r"""^"?x-modality"?\s*=\s*'(.*)'\s*$""", text, re.M)
+try:
+    print(json.loads(m.group(1)).get("type") or "PICKUP")
+except Exception:
+    print("PICKUP")
+PY
+)"
+fi
+
+# KROGER_CONFIG points at a config other than the default (the end-to-end tests use it).
+cli() {
+	if [ -n "${KROGER_CONFIG:-}" ]; then "$CLI" --config "$KROGER_CONFIG" "$@"; else "$CLI" "$@"; fi
+}
 [ -r "$STAPLES" ] || { echo "no staples file at $STAPLES — run kroger-staples first" >&2; exit 1; }
 
 body="$(python3 - "$STAPLES" "$MODALITY" <<'PY'
@@ -92,7 +113,7 @@ trap 'rm -f "$stock"' EXIT
 checked=1
 while IFS= read -r chunk; do
 	[ -n "$chunk" ] || continue
-	if ! "$CLI" products get --gtin13s "$chunk" --json >>"$stock" 2>/dev/null; then
+	if ! cli products get --gtin13s "$chunk" --json >>"$stock" 2>/dev/null; then
 		checked=0
 		echo "Couldn't check stock with Kroger; adding everything unchecked." >&2
 		break
@@ -153,42 +174,46 @@ fi
 
 echo "" >&2
 echo "Finding your active cart..." >&2
-carts="$("$CLI" cart get --no-cache --json)"
-cart_id="$(printf '%s' "$carts" | python3 -c '
-import json, sys
-for c in json.load(sys.stdin)["results"]["data"]["carts"]:
-    if c.get("type") == "ACTIVE":
-        print(c["id"]); break
-')"
-[ -n "$cart_id" ] || { echo "no ACTIVE cart on this account; open kroger.com and add an item" >&2; exit 1; }
+carts="$(mktemp)"
+trap 'rm -f "$stock" "$carts"' EXIT
+cli cart get --no-cache --json >"$carts"
 
-if [ "$CLEAR" -eq 1 ]; then
-	# Removal is quantity 0 against the server-assigned line item id.
-	# Sending {"lineItems":[]} is rejected: the API requires at least one
-	# entry, so an empty cart has to be spelled out item by item.
-	clear_body="$(printf '%s' "$carts" | python3 -c '
+# Kroger sets quantities rather than adding to them, so the plan is worked out
+# against the cart: never lower what's already there, and with --clear add
+# first and remove the rest after, so a failure can't leave an empty cart.
+plan="$(python3 - "$body" "$CLEAR" "$carts" <<'PY'
 import json, sys
-for c in json.load(sys.stdin)["results"]["data"]["carts"]:
-    if c.get("type") != "ACTIVE":
-        continue
-    items = [{
-        "id": li["id"],
-        "gtin13": li["gtin13"],
-        "quantity": 0,
-        "modalityType": li.get("modalityType", "PICKUP"),
-        "channel": "WEB",
-        "substitutionPolicy": "SHOPPER_CHOICE",
-        "savedForLater": False,
-    } for li in (c.get("lineItems") or [])]
-    print(json.dumps({"lineItems": items}) if items else "")
-')"
-	if [ -n "$clear_body" ]; then
-		echo "Clearing the cart..." >&2
-		printf '%s' "$clear_body" | "$CLI" cart add "$cart_id" --stdin --json >/dev/null
-	else
-		echo "Cart is already empty." >&2
-	fi
+
+body, clear = json.loads(sys.argv[1]), sys.argv[2] == "1"
+with open(sys.argv[3]) as fh:
+    carts = json.load(fh)["results"]["data"]["carts"]
+active = next((c for c in carts if c.get("type") == "ACTIVE"), None)
+if active is None:
+    sys.exit("no ACTIVE cart on this account; open kroger.com and add an item")
+lines = active.get("lineItems") or []
+have = {}
+for li in lines:
+    have[li["gtin13"]] = have.get(li["gtin13"], 0) + li["quantity"]
+wanted = set()
+for item in body["lineItems"]:
+    wanted.add(item["gtin13"])
+    if not clear:
+        item["quantity"] = max(item["quantity"], have.get(item["gtin13"], 0))
+removals = [{
+    "id": li["id"], "gtin13": li["gtin13"], "quantity": 0,
+    "modalityType": li.get("modalityType", "PICKUP"), "channel": "WEB",
+    "substitutionPolicy": "SHOPPER_CHOICE", "savedForLater": False,
+} for li in lines if clear and li["gtin13"] not in wanted]
+print(json.dumps({"cart": active["id"], "add": body, "remove": {"lineItems": removals} if removals else None}))
+PY
+)"
+
+cart_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["cart"])' "$plan")"
+python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["add"]))' "$plan" |
+	cli cart add "$cart_id" --stdin --json >/dev/null
+removals="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1])["remove"]; print(json.dumps(r) if r else "")' "$plan")"
+if [ -n "$removals" ]; then
+	echo "Removing what isn't on your usual..." >&2
+	printf '%s' "$removals" | cli cart add "$cart_id" --stdin --json >/dev/null
 fi
-
-printf '%s' "$body" | "$CLI" cart add "$cart_id" --stdin --json >/dev/null
-echo "Added to cart $cart_id. Review and check out at https://www.kroger.com/cart" >&2
+echo "Done. Review and check out at https://www.kroger.com/cart" >&2

@@ -68,7 +68,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   display: flex; align-items: center; gap: 20px;
 }
 .brand { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
-#cart-link { margin-left: auto; }
+#cart-link { margin-left: 12px; }
+.store-chip { margin-left: auto; font-size: 12px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+.store-chip[hidden] + #cart-link { margin-left: auto; }
 
 .tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--muted); border-radius: var(--radius); }
 .tabs button {
@@ -105,6 +107,10 @@ button:disabled { opacity: .5; cursor: default; }
 .item .btn.icon-only { opacity: .35; }
 .item:hover .btn.icon-only, .item .btn.icon-only:focus-visible { opacity: 1; }
 @media (hover: none) { .item .btn.icon-only { opacity: .6; } }
+.btn.star { width: 28px; margin-right: -4px; }
+.btn.star:hover:not(:disabled) { color: #ca8a04; }
+.item .btn.star.on { opacity: 1; color: #ca8a04; }
+.btn.star.on svg { fill: currentColor; }
 
 .input {
   font: inherit; height: 36px; padding: 0 12px;
@@ -220,6 +226,12 @@ span.thumb { background: var(--muted); }
 .basket-lines .stepper button { height: 26px; width: 28px; }
 button.make-staple { height: auto; padding: 0; font-size: 12px; font-weight: 400; color: var(--muted-foreground); text-decoration: underline; text-underline-offset: 2px; }
 button.make-staple:hover { color: var(--foreground); }
+.line-sub { display: flex; gap: 8px; flex-wrap: wrap; }
+.basket-total { margin: 0; font-size: 13px; color: var(--muted-foreground); text-align: center; }
+.sale { color: #15803d; font-weight: 600; }
+.badge.sale-badge { background: color-mix(in srgb, #15803d 12%, var(--card)); color: #15803d; }
+.cookie-message { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--destructive) 8%, var(--card)); color: var(--destructive); font-size: 13px; }
+#cookie-title:focus { outline: none; }
 .basket-more { display: flex; justify-content: center; flex-wrap: wrap; gap: 0; }
 .basket-more .btn { padding: 0 8px; }
 #basket-discard { align-self: center; }
@@ -259,6 +271,7 @@ dialog .search-row { margin: 12px 0 8px; }
   .topbar-inner { flex-wrap: wrap; padding: 10px 16px; gap: 10px 16px; }
   .tabs { order: 3; width: 100%; }
   .tabs button { flex: 1; }
+  .store-chip { max-width: 45vw; }
   main { padding: 20px 16px 96px; }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .page-head .input { width: 100%; }

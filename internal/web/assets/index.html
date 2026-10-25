@@ -3,31 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kroger cart</title>
+<title>Kroger Cart</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <span class="brand">Kroger cart</span>
-    <nav id="tabs" class="tabs" aria-label="Sections">
-      <button data-tab="staples" class="active">Staples</button>
-      <button data-tab="search">Search</button>
-      <button data-tab="recipes">Recipes</button>
-      <button data-tab="history">Past trips</button>
+    <span class="brand">Kroger Cart</span>
+    <nav id="tabs" class="tabs" role="tablist" aria-label="Sections">
+      <button data-tab="staples" role="tab" aria-controls="tab-staples" aria-selected="true" class="active">Staples</button>
+      <button data-tab="search" role="tab" aria-controls="tab-search" aria-selected="false">Search</button>
+      <button data-tab="recipes" role="tab" aria-controls="tab-recipes" aria-selected="false">Recipes</button>
+      <button data-tab="history" role="tab" aria-controls="tab-history" aria-selected="false">Past trips</button>
     </nav>
-    <a id="cart-link" class="btn outline sm" href="https://www.kroger.com/cart" target="_blank" rel="noreferrer">
-      <span>Check out on kroger.com</span>
-    </a>
+    <span id="store-chip" class="store-chip" hidden></span>
+    <a id="cart-link" class="btn outline sm" href="https://www.kroger.com/cart" target="_blank" rel="noreferrer">Check out on kroger.com</a>
   </div>
 </header>
 
-<div id="banner" role="status" hidden></div>
+<div id="banner" role="status" aria-live="polite" hidden></div>
 
 <main>
   <section id="cookie-box" class="card notice" hidden>
-    <h2>Your Kroger session has expired</h2>
-    <p class="muted">If you're signed in to kroger.com in Chrome, this reads the session straight from it. macOS asks once for keychain permission.</p>
+    <h2 id="cookie-title" tabindex="-1">Sign in to Kroger</h2>
+    <p class="muted">Sign in on <a href="https://www.kroger.com" target="_blank" rel="noreferrer">kroger.com</a> in Chrome, then import that session here. macOS asks once to use your keychain; choose Always Allow.</p>
+    <p id="cookie-message" class="cookie-message" hidden></p>
     <div class="row">
       <button id="cookie-chrome" class="btn primary">Import from Chrome</button>
       <button id="cookie-cancel" class="btn ghost">Not now</button>
@@ -46,16 +46,27 @@
     </details>
   </section>
 
+  <section id="store-box" class="card notice" hidden>
+    <h2>Tell Kroger Cart which store you shop at</h2>
+    <p class="muted">Search and stock depend on it. This takes one copy and paste:</p>
+    <ol>
+      <li>On <a href="https://www.kroger.com" target="_blank" rel="noreferrer">kroger.com</a> in Chrome, search for anything.</li>
+      <li>Open DevTools (⌥⌘I) → <b>Network</b>, type <code>products-search</code> in the filter box.</li>
+      <li>Right-click that request → <b>Copy</b> → <b>Copy as cURL</b>.</li>
+      <li>In Terminal, from the Kroger Cart folder: <code>pbpaste | ./kroger-pp-cli auth set-store -</code></li>
+      <li>Reload this page.</li>
+    </ol>
+  </section>
+
   <div class="layout">
     <div class="content">
-      <!-- Staples -->
-      <section id="tab-staples" class="tab">
+      <section id="tab-staples" class="tab" role="tabpanel">
         <div class="page-head">
           <div>
             <h1>Staples</h1>
-            <p class="muted">What you buy most, most-bought first.</p>
+            <p class="muted">What you buy most, most-bought first. ★ marks your usual.</p>
           </div>
-          <input id="staples-filter" class="input" type="search" placeholder="Filter staples…" spellcheck="false">
+          <input id="staples-filter" class="input" type="search" placeholder="Filter staples…" aria-label="Filter staples" spellcheck="false">
         </div>
         <div id="staples-list" class="card list"></div>
         <div class="page-foot">
@@ -63,8 +74,7 @@
         </div>
       </section>
 
-      <!-- Search -->
-      <section id="tab-search" class="tab" hidden>
+      <section id="tab-search" class="tab" role="tabpanel" hidden>
         <div class="page-head">
           <div>
             <h1>Search</h1>
@@ -72,32 +82,30 @@
           </div>
         </div>
         <form id="find-form" class="search-row">
-          <input id="find-q" class="input" type="search" placeholder="Olive oil, sourdough…" spellcheck="false" autocomplete="off">
+          <input id="find-q" class="input" type="search" placeholder="Olive oil, sourdough…" aria-label="Search kroger.com" spellcheck="false" autocomplete="off">
           <button id="find-go" class="btn primary">Search</button>
         </form>
         <div id="find-list" class="card list"></div>
       </section>
 
-      <!-- Recipes -->
-      <section id="tab-recipes" class="tab" hidden>
+      <section id="tab-recipes" class="tab" role="tabpanel" hidden>
         <div class="page-head">
           <div>
             <h1>Recipes</h1>
-            <p class="muted">Groups of items you buy together. Add one and every ingredient goes on your list.</p>
+            <p class="muted">Groups of items you buy together. Adding one puts every ingredient in your cart.</p>
           </div>
           <button id="recipe-new" class="btn outline">New recipe</button>
         </div>
         <div id="recipes-list" class="card list"></div>
       </section>
 
-      <!-- History -->
-      <section id="tab-history" class="tab" hidden>
+      <section id="tab-history" class="tab" role="tabpanel" hidden>
         <div class="page-head">
           <div>
             <h1>Past trips</h1>
             <p class="muted">Open a trip to add anything you bought before.</p>
           </div>
-          <input id="history-filter" class="input" type="search" placeholder="Find an item…" spellcheck="false">
+          <input id="history-filter" class="input" type="search" placeholder="Find an item…" aria-label="Find an item in past trips" spellcheck="false">
         </div>
         <div id="history-list" class="card list"></div>
         <div class="page-foot">
@@ -107,8 +115,8 @@
     </div>
 
     <aside id="basket" aria-label="Your Kroger cart">
-      <button id="basket-bar" type="button" class="basket-bar"></button>
-      <div class="card basket-panel">
+      <button id="basket-bar" type="button" class="basket-bar" aria-controls="basket-panel" aria-expanded="false"></button>
+      <div id="basket-panel" class="card basket-panel">
         <div class="basket-head">
           <h2>Your Kroger cart</h2>
           <span id="basket-count" class="badge"></span>
@@ -118,6 +126,7 @@
         </div>
         <div id="basket-body"></div>
         <div class="basket-foot">
+          <p id="basket-total" class="basket-total" hidden></p>
           <button id="basket-send" class="btn primary lg" hidden>Update Kroger cart</button>
           <a id="basket-checkout" class="btn outline lg" href="https://www.kroger.com/cart" target="_blank" rel="noreferrer" hidden>Check out on kroger.com</a>
           <button id="basket-discard" type="button" class="btn ghost sm" hidden>Discard changes</button>
@@ -132,7 +141,6 @@
   </div>
 </main>
 
-<!-- Recipe editor -->
 <dialog id="recipe-dialog">
   <form id="recipe-form" method="dialog">
     <h2 id="recipe-title">New recipe</h2>
@@ -141,7 +149,7 @@
     <h3>Ingredients</h3>
     <div id="recipe-ingredients" class="card list compact"></div>
     <div class="search-row">
-      <input id="recipe-search" class="input" type="search" placeholder="Search products to add…" spellcheck="false">
+      <input id="recipe-search" class="input" type="search" placeholder="Search products to add…" aria-label="Search products to add" spellcheck="false">
       <button type="button" id="recipe-search-go" class="btn outline">Search</button>
     </div>
     <div id="recipe-results" class="card list compact"></div>

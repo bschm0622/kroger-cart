@@ -11,6 +11,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -33,7 +34,9 @@ type Item struct {
 	// TEMPORARILY_OUT_OF_STOCK. Unavailable is set, with Kroger's own message,
 	// when the item can't be ordered that way right now; it stays empty when
 	// Kroger said nothing either way, rather than guessing.
-	Stock       string `json:"stock,omitempty"`
+	Stock string `json:"stock,omitempty"`
+	// WasPrice is the regular price when Price is a sale price.
+	WasPrice    string `json:"wasPrice,omitempty"`
 	Unavailable string `json:"unavailable,omitempty"`
 	MaxQty      int    `json:"maxQty,omitempty"`
 
@@ -61,6 +64,8 @@ type Trip struct {
 	Type       string   `json:"type"`
 	ReceiptKey string   `json:"receiptKey"`
 	UPCs       []string `json:"upcs"`
+	// Counts is how many of each UPC the trip bought.
+	Counts map[string]int `json:"counts"`
 }
 
 // api wraps the CLI's client with the response-shape knowledge the UI needs.
@@ -72,17 +77,7 @@ type api struct {
 // modality is how you shop — PICKUP, DELIVERY, … — read from the x-modality
 // store header saved by `auth set-store`. Availability differs by modality, so
 // it decides which of Kroger's per-modality answers counts.
-func (a *api) modality() string {
-	if a.c != nil && a.c.Config != nil {
-		var m struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal([]byte(a.c.Config.Headers["x-modality"]), &m) == nil && m.Type != "" {
-			return m.Type
-		}
-	}
-	return "PICKUP"
-}
+func (a *api) modality() string { return client.ModalityType(a.c.Config) }
 
 const (
 	pathCarts    = "/atlas/v1/carts"
@@ -100,6 +95,11 @@ const (
 //
 // An account can hold a saved-for-later cart alongside the live one, so the
 // ACTIVE type is matched rather than the first entry.
+// errNoActiveCart means the account has no live cart yet. Kroger creates one
+// the first time anything is added on kroger.com, and there's no API to make
+// one, so the page tells the person to do exactly that.
+var errNoActiveCart = errors.New("this Kroger account has no active cart yet")
+
 func (a *api) Cart(ctx context.Context) (string, []CartLine, error) {
 	raw, err := a.c.GetNoCache(ctx, pathCarts, nil)
 	if err != nil {
@@ -137,10 +137,7 @@ func (a *api) Cart(ctx context.Context) (string, []CartLine, error) {
 		}
 		return c.ID, lines, nil
 	}
-	if len(body.Data.Carts) == 0 {
-		return "", nil, fmt.Errorf("no carts on this account; add one item on kroger.com to create one")
-	}
-	return "", nil, fmt.Errorf("found %d cart(s) but none are ACTIVE; open kroger.com to create a shopping cart", len(body.Data.Carts))
+	return "", nil, errNoActiveCart
 }
 
 // wantLine is a requested quantity for a UPC.
@@ -169,23 +166,6 @@ func (a *api) AddToCart(ctx context.Context, cartID string, want []wantLine, mod
 	return err
 }
 
-// ClearCart empties the cart.
-//
-// Removal is quantity 0 against the server-assigned line item id; an empty
-// lineItems array is rejected with "must contain at least 1 items", so an
-// empty cart has to be spelled out one line at a time.
-func (a *api) ClearCart(ctx context.Context, cartID string, lines []CartLine) error {
-	if len(lines) == 0 {
-		return nil
-	}
-	items := make([]map[string]any, 0, len(lines))
-	for _, li := range lines {
-		items = append(items, lineItem(li.UPC, 0, li.Modality, li.ID))
-	}
-	_, _, err := a.c.Put(ctx, pathCart+cartID, map[string]any{"lineItems": items})
-	return err
-}
-
 // lineEdit is a new quantity for a line already in the cart; 0 removes it.
 type lineEdit struct {
 	Line     CartLine
@@ -204,13 +184,6 @@ func (a *api) EditLines(ctx context.Context, cartID string, edits []lineEdit) er
 		items = append(items, lineItem(e.Line.UPC, e.Quantity, e.Line.Modality, e.Line.ID))
 	}
 	_, _, err := a.c.Put(ctx, pathCart+cartID, map[string]any{"lineItems": items})
-	return err
-}
-
-// SetQuantity changes one existing line, or removes it when qty is 0.
-func (a *api) SetQuantity(ctx context.Context, cartID string, line CartLine, qty int) error {
-	item := lineItem(line.UPC, qty, line.Modality, line.ID)
-	_, _, err := a.c.Put(ctx, pathCart+cartID, map[string]any{"lineItems": []map[string]any{item}})
 	return err
 }
 
@@ -244,28 +217,35 @@ func lineItem(upc string, qty int, modality, id string) map[string]any {
 // groceries land there — deli-counter and other weighed items are absent from
 // the verified catalog, and a history tab full of bare barcodes is the result of
 // taking the first miss as final.
-func (a *api) Products(ctx context.Context, upcs []string) (map[string]Item, error) {
-	out := make(map[string]Item, len(upcs))
-	if err := a.products(ctx, upcs, true, out); err != nil {
-		return out, err
+//
+// unchecked lists the UPCs Kroger was never asked about because a request
+// failed (a 429 part-way through 160 staples, say). They are unknown, not
+// missing: callers must not treat them as "not sold here". A UPC that is
+// neither in found nor in unchecked was asked about in both catalogs and
+// Kroger has nothing for it.
+func (a *api) Products(ctx context.Context, upcs []string) (found map[string]Item, unchecked []string, err error) {
+	found = make(map[string]Item, len(upcs))
+	if failed, err := a.products(ctx, upcs, true, found); err != nil {
+		return found, failed, err
 	}
 	var missing []string
 	for _, u := range upcs {
-		if _, ok := out[u]; !ok {
+		if _, ok := found[u]; !ok {
 			missing = append(missing, u)
 		}
 	}
 	if len(missing) > 0 {
-		if err := a.products(ctx, missing, false, out); err != nil {
-			// The verified pass already succeeded, so return what it found
-			// rather than failing the whole lookup over the fallback.
-			return out, nil
+		if failed, err := a.products(ctx, missing, false, found); err != nil {
+			return found, failed, err
 		}
 	}
-	return out, nil
+	return found, nil, nil
 }
 
-func (a *api) products(ctx context.Context, upcs []string, verified bool, out map[string]Item) error {
+// products looks UPCs up in batches. On a failed request it stops — carrying
+// on into a rate limit only digs the hole deeper — and returns every UPC it
+// didn't get an answer for.
+func (a *api) products(ctx context.Context, upcs []string, verified bool, out map[string]Item) ([]string, error) {
 	const batch = 24
 	mod := a.modality()
 	for start := 0; start < len(upcs); start += batch {
@@ -276,7 +256,7 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 			"projections":     productProjections,
 		})
 		if err != nil {
-			return err
+			return upcs[start:], err
 		}
 		var body struct {
 			Data struct {
@@ -319,7 +299,7 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
-			return fmt.Errorf("parsing products response: %w", err)
+			return upcs[start:], fmt.Errorf("parsing products response: %w", err)
 		}
 		for _, p := range body.Data.Products {
 			if p.Item.UPC == "" {
@@ -343,8 +323,9 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 						continue
 					}
 					it.Price = dollars(f.Regular.Price)
-					if f.Sale != nil && f.Sale.Price != "" {
+					if f.Sale != nil && f.Sale.Price != "" && f.Sale.Price != f.Regular.Price {
 						it.Price = dollars(f.Sale.Price)
+						it.WasPrice = dollars(f.Regular.Price)
 					}
 					it.Stock = f.Availability.InventoryLevel
 					it.MaxQty = f.MaxOrderQuantity
@@ -360,7 +341,7 @@ func (a *api) products(ctx context.Context, upcs []string, verified bool, out ma
 			out[it.UPC] = it
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // dollars turns Kroger's "USD 12.39" into "$12.39". Its ready-made
@@ -399,7 +380,7 @@ func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, err
 	}
 	raw, err := a.c.GetNoCache(ctx, pathSearch, map[string]string{
 		"filter.query":              keyword,
-		"filter.fulfillmentMethods": "PICKUP",
+		"filter.fulfillmentMethods": a.modality(),
 		"page.size":                 fmt.Sprint(size),
 	})
 	if err != nil {
@@ -432,11 +413,10 @@ func (a *api) Search(ctx context.Context, keyword string, size int) ([]Item, err
 	for i, it := range items {
 		upcs[i] = it.UPC
 	}
-	if details, err := a.Products(ctx, upcs); err == nil {
-		for i, it := range items {
-			if d, ok := details[it.UPC]; ok {
-				items[i] = d
-			}
+	details, _, _ := a.Products(ctx, upcs)
+	for i, it := range items {
+		if d, ok := details[it.UPC]; ok {
+			items[i] = d
 		}
 	}
 	return items, nil
@@ -477,11 +457,18 @@ func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 	}
 	trips := make([]Trip, 0, len(body.Data.PostOrderSearch.Data))
 	for _, t := range body.Data.PostOrderSearch.Data {
+		// A product bought twice is listed twice on the receipt; it's shown
+		// once, with how many.
 		upcs := make([]string, 0, len(t.LineItems))
+		counts := map[string]int{}
 		for _, li := range t.LineItems {
-			if li.UPC != "" {
+			if li.UPC == "" {
+				continue
+			}
+			if counts[li.UPC] == 0 {
 				upcs = append(upcs, li.UPC)
 			}
+			counts[li.UPC]++
 		}
 		date, _, _ := strings.Cut(t.CreatedDateTime.Value, "T")
 		trips = append(trips, Trip{
@@ -490,6 +477,7 @@ func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 			Type:       t.PurchaseType,
 			ReceiptKey: t.ReceiptKey,
 			UPCs:       upcs,
+			Counts:     counts,
 		})
 	}
 	return trips, nil
@@ -498,19 +486,13 @@ func (a *api) History(ctx context.Context, size int) ([]Trip, error) {
 // FrequentUPCs counts how many trips each UPC appears in, most frequent first.
 // This is the same ranking the kroger-staples script produces, computed live so
 // the UI's suggestions don't go stale.
-func (a *api) FrequentUPCs(ctx context.Context, trips []Trip) []struct {
+func frequentUPCs(trips []Trip) []struct {
 	UPC   string `json:"upc"`
 	Times int    `json:"times"`
 } {
 	counts := map[string]int{}
 	for _, t := range trips {
-		seen := map[string]bool{}
-		for _, u := range t.UPCs {
-			// A UPC listed twice on one receipt is still one trip.
-			if seen[u] {
-				continue
-			}
-			seen[u] = true
+		for _, u := range t.UPCs { // already one entry per product per trip
 			counts[u]++
 		}
 	}

@@ -2,8 +2,12 @@
 // exercise the real page and server without touching anyone's account.
 //
 // It answers the five endpoints the page uses with a small fixed catalog, and
-// keeps a cart that PUTs actually change. POST /__reset restores the starting
-// cart; GET /__cart shows the current one, for tests to check what was sent.
+// keeps a cart that PUTs actually change. Test controls:
+//
+//	POST /__reset   starting cart, no failures
+//	GET  /__cart    the cart now
+//	POST /__cart    replace the cart: {"upc": qty, ...}
+//	POST /__fail    {"path": "products"|"carts", "status": 429, "times": 3}
 package main
 
 import (
@@ -47,6 +51,17 @@ func main() {
 
 	var mu sync.Mutex
 	cart := startCart()
+	type failRule struct{ Status, Times int }
+	fails := map[string]*failRule{}
+	failing := func(w http.ResponseWriter, path string) bool {
+		f := fails[path]
+		if f == nil || f.Times <= 0 {
+			return false
+		}
+		f.Times--
+		http.Error(w, `{"error":"fake failure"}`, f.Status)
+		return true
+	}
 
 	write := func(w http.ResponseWriter, v any) {
 		w.Header().Set("Content-Type", "application/json")
@@ -74,10 +89,36 @@ func main() {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/__reset":
 			cart = startCart()
+			fails = map[string]*failRule{}
 			write(w, map[string]bool{"ok": true})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/__cart":
 			write(w, cart)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/__cart":
+			next := map[string]int{}
+			if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			cart = next
+			write(w, cart)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/__fail":
+			var f struct {
+				Path   string `json:"path"`
+				Status int    `json:"status"`
+				Times  int    `json:"times"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			fails[f.Path] = &failRule{Status: f.Status, Times: f.Times}
+			write(w, map[string]bool{"ok": true})
+
+		case strings.HasPrefix(r.URL.Path, "/atlas/v1/carts") && failing(w, "carts"):
+		case r.URL.Path == "/atlas/v1/product/v2/products" && failing(w, "products"):
 
 		case strings.HasPrefix(r.URL.Path, "/img/"):
 			w.Header().Set("Content-Type", "image/png")
