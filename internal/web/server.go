@@ -166,6 +166,10 @@ type failure struct {
 
 var errCoolingDown = errors.New("cooling down after a rate limit")
 
+// krogerRate is requests per second to Kroger. Looking up 170 staples is about
+// ten requests, so this keeps it under ten seconds without bursting.
+const krogerRate = 1.5
+
 func classify(err error) failure {
 	var apiErr *client.APIError
 	switch {
@@ -179,6 +183,8 @@ func classify(err error) failure {
 			return failure{"auth", "Your Kroger session has expired."}
 		case apiErr.StatusCode == http.StatusForbidden:
 			return failure{"auth", "Kroger refused the saved session."}
+		case isChallenge(apiErr):
+			return failure{"auth", "Kroger’s bot check stopped the request. Open kroger.com in Chrome and click around for a moment, then import the session again."}
 		case apiErr.StatusCode == http.StatusTooManyRequests:
 			return failure{"rate_limited", "Kroger is limiting requests right now. Wait a minute, then try again."}
 		case apiErr.StatusCode == http.StatusBadRequest && strings.Contains(apiErr.Body, "LAF_OBJECTS_REQUIRED"):
@@ -194,6 +200,13 @@ func classify(err error) failure {
 		return failure{"auth", "Kroger's bot protection turned the request away, which is what an old session looks like."}
 	}
 	return failure{"network", "Couldn't reach Kroger: " + err.Error()}
+}
+
+// isChallenge spots Akamai's bot check, which also answers 429. Waiting doesn't
+// clear it (the same session keeps getting it); a session fresh from a real
+// browser does.
+func isChallenge(e *client.APIError) bool {
+	return e.StatusCode == http.StatusTooManyRequests && strings.Contains(e.Body, "cpr_chlge")
 }
 
 func writeFailure(w http.ResponseWriter, status int, f failure) {
@@ -214,7 +227,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 // noteRateLimit pauses Kroger calls for a minute after a 429; retrying sooner prolongs it.
 func (s *Server) noteRateLimit(err error) {
 	var apiErr *client.APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests && !isChallenge(apiErr) {
 		s.mu.Lock()
 		s.coolUntil = time.Now().Add(time.Minute)
 		s.mu.Unlock()
@@ -238,12 +251,14 @@ func (s *Server) api() (*api, error) {
 	}
 	c.NoCache = true
 	c.NoRetryOn429 = true
+	// Every call shares one steady pace. The client's own limiter speeds up after
+	// each run of successes until Kroger answers 429, and here a 429 pauses the
+	// whole page for a minute.
 	s.mu.Lock()
 	if s.limiter == nil {
-		s.limiter = c.Limiter()
-	} else {
-		c.ShareLimiter(s.limiter)
+		s.limiter = cliutil.NewSteadyLimiter(krogerRate)
 	}
+	c.ShareLimiter(s.limiter)
 	s.mu.Unlock()
 	return &api{c: c}, nil
 }

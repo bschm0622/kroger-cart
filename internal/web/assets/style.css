@@ -136,6 +136,23 @@ main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .page-head p { margin-top: 4px; }
 .page-head .input { width: 240px; }
+.head-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.head-tools .tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.usual-qty {
+  display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 8px;
+  border-radius: 999px; font-size: 12px; font-weight: 500;
+  background: color-mix(in srgb, #ca8a04 14%, var(--card)); color: #a16207;
+}
+.usual-qty span { margin-right: 2px; }
+.usual-qty button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 999px;
+  background: none; color: inherit; cursor: pointer;
+}
+.usual-qty button:hover:not(:disabled) { background: color-mix(in srgb, #ca8a04 22%, var(--card)); }
+.usual-qty button:disabled { opacity: .35; cursor: default; }
+.usual-qty .icon { width: 12px; height: 12px; }
+.usual-qty output { min-width: 14px; text-align: center; font-variant-numeric: tabular-nums; }
 .page-foot { margin-top: 12px; }
 .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .search-row .input { flex: 1; }
@@ -244,12 +261,13 @@ dialog .search-row { margin: 12px 0 8px; }
 
 @media (max-width: 900px) {
   .topbar-inner { flex-wrap: wrap; padding: 10px 16px; gap: 10px 16px; }
-  .tabs { order: 3; width: 100%; }
-  .tabs button { flex: 1; }
+  .topbar-inner .tabs { order: 3; width: 100%; }
+  .topbar-inner .tabs button { flex: 1; }
   .store-chip { max-width: 45vw; }
   main { padding: 20px 16px 96px; }
   .layout { grid-template-columns: minmax(0, 1fr); }
-  .page-head .input { width: 100%; }
+  .head-tools { width: 100%; }
+  .head-tools .input { flex: 1; width: auto; }
   #basket { position: static; }
   .basket-bar {
     display: flex; position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 10;

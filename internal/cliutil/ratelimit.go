@@ -44,6 +44,17 @@ func NewAdaptiveLimiter(ratePerSec float64) *AdaptiveLimiter {
 	}
 }
 
+// NewSteadyLimiter paces at a fixed rate that never ramps up. It still slows
+// down after a 429. Use it where finding the ceiling by hitting it costs more
+// than going slower.
+func NewSteadyLimiter(ratePerSec float64) *AdaptiveLimiter {
+	l := NewAdaptiveLimiter(ratePerSec)
+	if l != nil {
+		l.rampAfter = math.MaxInt
+	}
+	return l
+}
+
 func (l *AdaptiveLimiter) Wait() {
 	if l == nil {
 		return

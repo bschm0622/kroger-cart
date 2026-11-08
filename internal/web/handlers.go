@@ -303,12 +303,14 @@ func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": items, "unchecked": unchecked})
 }
 
-func staplesVersion(path string) int64 {
+// staplesVersion is a string because nanoseconds don't fit in a JavaScript
+// number: the page would round it, and every save would look out of date.
+func staplesVersion(path string) string {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return 0
+		return ""
 	}
-	return fi.ModTime().UnixNano()
+	return strconv.FormatInt(fi.ModTime().UnixNano(), 10)
 }
 
 func (s *Server) handleStaplesGet(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +328,7 @@ func (s *Server) handleStaplesGet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStaplesPut(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Staples []Staple `json:"staples"`
-		Version int64    `json:"version"`
+		Version string   `json:"version"`
 	}
 	if err := decode(r, &body); err != nil {
 		badRequest(w, err)

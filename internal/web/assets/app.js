@@ -38,13 +38,14 @@ function readJSON(key, fallback) {
 
 const DRAFT_KEY = 'kroger-cart:draft';
 const LOOKUP_KEY = 'kroger-cart:lookups';
-const LOOKUP_TTL = 30 * 60 * 1000;
+// Prices change weekly; stock is re-checked by the server before anything is added.
+const LOOKUP_TTL = 6 * 60 * 60 * 1000;
 const NOT_FOUND = 'Not found at your store';
 
 const state = {
   status: null,
   staples: [],
-  staplesVersion: 0,
+  staplesVersion: '',
   staplesError: '',
   staplesLoaded: false,
   draft: new Map(),
@@ -59,6 +60,7 @@ const state = {
   openTrips: new Set(),
   historyFilter: '',
   filter: '',
+  usualOnly: false,
   found: [],
   findTerm: '',
   editing: null,
@@ -107,7 +109,7 @@ async function api(path, { quiet, busyText, ...opts } = {}) {
     try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
     if (!res.ok) {
       const err = new ApiError(data.error || `${res.status} ${res.statusText}`, data.kind || 'other');
-      if (err.kind === 'auth') onAuthFailure();
+      if (err.kind === 'auth') onAuthFailure(err.message);
       if (err.kind === 'no_store') showStoreBox();
       throw err;
     }
@@ -146,11 +148,11 @@ function showCookieBox(message) {
 }
 
 let triedAutoImport = false;
-async function onAuthFailure() {
-  if (triedAutoImport) { showCookieBox(); return; }
+async function onAuthFailure(message) {
+  if (triedAutoImport) { showCookieBox(message); return; }
   triedAutoImport = true;
   if (await importFromChrome({ quiet: true })) return;
-  showCookieBox();
+  showCookieBox(message);
 }
 
 async function importFromChrome({ quiet } = {}) {
@@ -177,6 +179,7 @@ async function importFromChrome({ quiet } = {}) {
 
 async function afterSignIn() {
   await refreshCart();
+  lookUpStaples();
   for (const tab of loaded) if (tab !== 'staples' && tab !== 'search') loadTab(tab, true);
 }
 
@@ -362,7 +365,6 @@ function priceBits(upc) {
     : [d.price];
 }
 
-// Lookups are cached for 30 minutes; the server re-checks stock before adding anything.
 async function lookUp(upcs) {
   const todo = [...new Set(upcs)].filter(Boolean);
   if (!todo.length) return;
@@ -687,11 +689,11 @@ $('#basket-to-usual').onclick = () => {
   banner(`Saved ${plural(lines.length, 'item')} as your usual.`, 'ok');
 };
 
-async function loadStaples() {
+async function loadStaples({ lookup = true } = {}) {
   try {
     const out = await api('/api/staples');
     state.staples = out.staples || [];
-    state.staplesVersion = out.version || 0;
+    state.staplesVersion = out.version || '';
     state.staplesLoaded = true;
     state.staplesError = '';
   } catch (err) {
@@ -701,6 +703,10 @@ async function loadStaples() {
   }
   renderStaples();
   renderBasket();
+  if (lookup) lookUpStaples();
+}
+
+function lookUpStaples() {
   if (state.staplesLoaded) lookUp(state.staples.map((s) => s.upc)).then(renderEverything);
 }
 
@@ -729,12 +735,16 @@ function renderStaples() {
       list.append(emptyRow(`Your staples file couldn’t be read, so it’s left untouched: ${state.staplesError}. Fix that line, then reload.`));
       return;
     }
+    renderStaplesView();
     const filter = state.filter.toLowerCase();
-    const shown = state.staples.filter((s) => !filter || (s.name || '').toLowerCase().includes(filter) || s.upc.includes(filter));
+    const shown = state.staples.filter((s) => (!state.usualOnly || s.selected)
+      && (!filter || (s.name || '').toLowerCase().includes(filter) || s.upc.includes(filter)));
     if (!state.staples.length) {
       list.append(emptyRow('No staples yet. Rebuild from your purchase history below, or find things in Search and use “Make it a staple” in the cart panel.'));
+    } else if (state.usualOnly && !usual().length) {
+      list.append(emptyRow('Nothing is starred yet. Star a staple to make it part of your usual.'));
     } else if (!shown.length) {
-      list.append(emptyRow(`None of your staples match “${state.filter}”. Try Search.`));
+      list.append(emptyRow(`None of your ${state.usualOnly ? 'usual' : 'staples'} match “${state.filter}”.${state.usualOnly ? '' : ' Try Search.'}`));
     }
     const buyable = shown.filter((s) => !unavailableFor(s.upc));
     const unavailable = shown.filter((s) => unavailableFor(s.upc));
@@ -744,6 +754,24 @@ function renderStaples() {
       for (const s of unavailable) list.append(stapleRow(s));
     }
   });
+}
+
+// usualQty is how many "Add your usual" puts in the cart, editable in place.
+function usualQty(s, label) {
+  const qty = s.qty || 1;
+  const set = (n) => {
+    s.qty = n;
+    saveStaples();
+    renderStaples();
+  };
+  const minus = el('button', { type: 'button', ariaLabel: `Usual: one fewer ${label}`, disabled: qty <= 1,
+    title: qty <= 1 ? 'To drop it from your usual, unstar it' : '' }, [icon('minus')]);
+  minus.onclick = () => set(qty - 1);
+  const plus = el('button', { type: 'button', ariaLabel: `Usual: one more ${label}` }, [icon('plus')]);
+  plus.onclick = () => set(qty + 1);
+  return el('span', { className: 'usual-qty', title: 'How many “Add your usual” puts in your cart' }, [
+    el('span', { textContent: 'Usual adds' }), minus, el('output', { textContent: String(qty) }), plus,
+  ]);
 }
 
 function stapleRow(s) {
@@ -769,6 +797,7 @@ function stapleRow(s) {
     renderBasket();
   };
   const meta = [
+    s.selected ? usualQty(s, label) : null,
     ...priceBits(s.upc),
     s.times ? `Bought ${s.times} times` : 'Added by you',
     stockBadge(s.upc),
@@ -780,11 +809,23 @@ function stapleRow(s) {
 
 $('#staples-filter').oninput = (e) => { state.filter = e.target.value; renderStaples(); };
 
+function renderStaplesView() {
+  for (const b of document.querySelectorAll('#staples-view button')) {
+    const on = (b.dataset.view === 'usual') === state.usualOnly;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  $('#staples-usual-count').textContent = usual().length ? String(usual().length) : '';
+}
+for (const b of document.querySelectorAll('#staples-view button')) {
+  b.onclick = () => { state.usualOnly = b.dataset.view === 'usual'; renderStaples(); };
+}
+
 $('#staples-seed').onclick = () => run(async () => {
   const out = await post('/api/staples/seed', { trips: 100, minTimes: 2 },
     { busyText: 'Rebuilding from your last 100 trips. This can take a minute…' });
   state.staples = out.staples || [];
-  state.staplesVersion = out.version || 0;
+  state.staplesVersion = out.version || '';
   renderStaples();
   renderBasket();
   if (!out.trips) {
@@ -792,7 +833,7 @@ $('#staples-seed').onclick = () => run(async () => {
     return;
   }
   banner(`Rebuilt from ${plural(out.trips, 'trip')}: ${plural(state.staples.length, 'staple')}. Your usual and quantities were kept.`, 'ok');
-  lookUp(state.staples.map((s) => s.upc)).then(renderEverything);
+  lookUpStaples();
 });
 
 function renderFind() {
@@ -1037,7 +1078,8 @@ function renderHistory() {
   }
   renderStore();
   loaded.add('staples');
-  await loadStaples();
+  // Prices for every staple wait for the cart, so the two don't hit Kroger at once.
+  await loadStaples({ lookup: false });
   const wanted = location.hash.slice(1);
   showTab(document.getElementById(`tab-${wanted}`) ? wanted : 'staples');
   if (!state.status.hasCookie) {
@@ -1046,4 +1088,5 @@ function renderHistory() {
     return;
   }
   await refreshCart();
+  lookUpStaples();
 })();

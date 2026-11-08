@@ -66,7 +66,13 @@
             <h1>Staples</h1>
             <p class="muted">What you buy most, most-bought first. ★ marks your usual.</p>
           </div>
-          <input id="staples-filter" class="input" type="search" placeholder="Filter staples…" aria-label="Filter staples" spellcheck="false">
+          <div class="head-tools">
+            <div id="staples-view" class="tabs" role="group" aria-label="Show">
+              <button type="button" data-view="all" class="active" aria-pressed="true">All</button>
+              <button type="button" data-view="usual" aria-pressed="false">★ Usual <span id="staples-usual-count" class="badge"></span></button>
+            </div>
+            <input id="staples-filter" class="input" type="search" placeholder="Filter staples…" aria-label="Filter staples" spellcheck="false">
+          </div>
         </div>
         <div id="staples-list" class="card list"></div>
         <div class="page-foot">

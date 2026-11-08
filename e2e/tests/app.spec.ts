@@ -41,6 +41,23 @@ test('staples show price and picture, and what Kroger can’t sell sits under it
   await expect(row(page, '#staples-list', 'Test Discontinued Salsa').getByRole('button', { name: 'Unavailable' })).toBeDisabled();
 });
 
+test('the Usual filter shows only starred staples, each with how many it adds, which you can change', async ({ page }) => {
+  await openStaples(page);
+  await page.locator('#staples-view').getByRole('button', { name: /Usual/ }).click();
+  await expect(page.locator('#staples-list .item')).toHaveCount(1);
+  await expect(row(page, '#staples-list', 'Test Whole Milk').locator('.usual-qty output')).toHaveText('1');
+
+  await row(page, '#staples-list', 'Test Whole Milk').getByRole('button', { name: 'Usual: one more Test Whole Milk' }).click();
+  await expect(row(page, '#staples-list', 'Test Whole Milk').locator('.usual-qty output')).toHaveText('2');
+  await expect.poll(async () => (await (await page.request.get('/api/staples')).json()).staples
+    .find((x: { upc: string }) => x.upc === '0000000000101').qty).toBe(2);
+
+  // Put it back: the staples file is shared with the tests after this one.
+  await row(page, '#staples-list', 'Test Whole Milk').getByRole('button', { name: 'Usual: one fewer Test Whole Milk' }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/staples')).json()).staples
+    .find((x: { upc: string }) => x.upc === '0000000000101').qty).toBe(1);
+});
+
 test('adding an in-stock staple and updating puts it in the Kroger cart', async ({ page }) => {
   await openStaples(page);
   await row(page, '#staples-list', 'Test Sourdough Bread').getByRole('button', { name: 'Add Test Sourdough Bread', exact: true }).click();
